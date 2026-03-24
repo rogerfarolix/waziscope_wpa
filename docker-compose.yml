@@ -10,13 +10,13 @@ services:
     container_name: waziscope-extractor
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "8032:8032"
     environment:
       - PYTHONUNBUFFERED=1
     networks:
       - waziscope-net
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8032/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -31,7 +31,7 @@ services:
       - ./laravel:/var/www/html
     environment:
       - APP_ENV=production
-      - VIDEODOWN_EXTRACTOR_URL=http://extractor:8000
+      - VIDEODOWN_EXTRACTOR_URL=http://extractor:8032
     depends_on:
       extractor:
         condition: service_healthy

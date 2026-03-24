@@ -26,7 +26,7 @@
            └──────────────┬──────────────┘
                           │
            ┌──────────────▼──────────────┐
-           │   FastAPI (Python)           │  :8000
+           │   FastAPI (Python)           │  :8032
            │   - yt-dlp                   │
            │   - Extraction URL vidéo     │
            │   - TikTok no-watermark      │
@@ -53,7 +53,7 @@ docker-compose up -d
 ```bash
 cd extractor
 pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
+uvicorn main:app --reload --port 8032
 ```
 
 **Laravel + Vue.js :**
@@ -64,7 +64,7 @@ cp .env.example .env
 php artisan key:generate
 
 # Configurer l'URL du service FastAPI
-echo "VIDEODOWN_EXTRACTOR_URL=http://localhost:8000" >> .env
+echo "VIDEODOWN_EXTRACTOR_URL=http://localhost:8032" >> .env
 
 npm install
 npm run dev
@@ -82,7 +82,7 @@ APP_ENV=production
 APP_URL=https://ton-domaine.com
 
 # URL du service FastAPI extractor
-VIDEODOWN_EXTRACTOR_URL=http://localhost:8000
+VIDEODOWN_EXTRACTOR_URL=http://localhost:8032
 ```
 
 ---
@@ -91,7 +91,7 @@ VIDEODOWN_EXTRACTOR_URL=http://localhost:8000
 
 ```php
 'waziscope' => [
-    'extractor_url' => env('VIDEODOWN_EXTRACTOR_URL', 'http://localhost:8000'),
+    'extractor_url' => env('VIDEODOWN_EXTRACTOR_URL', 'http://localhost:8032'),
 ],
 ```
 

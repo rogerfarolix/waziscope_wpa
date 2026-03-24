@@ -36,7 +36,7 @@ return [
     ],
 
 'waziscope' => [
-    'extractor_url' => env('WAZISCOPE_EXTRACTOR_URL', 'http://localhost:8000'),
+    'extractor_url' => env('WAZISCOPE_EXTRACTOR_URL', 'http://localhost:8032'),
 ],
 
 ];

@@ -18,7 +18,7 @@ class VideoController extends Controller
 
     public function __construct()
     {
-        $this->extractorUrl = config('services.waziscope.extractor_url', 'http://localhost:8000');
+        $this->extractorUrl = config('services.waziscope.extractor_url', 'http://localhost:8032');
     }
 
     // ─── Extraction ────────────────────────────────────────────────────────────
