@@ -1,0 +1,90 @@
+# ─── Laravel ──────────────────────────────────────────────────────────────────
+/laravel/.env
+/laravel/.env.backup
+/laravel/.env.production
+/laravel/vendor/
+/laravel/node_modules/
+/laravel/public/build/
+/laravel/public/hot
+/laravel/public/storage
+/laravel/storage/*.key
+/laravel/storage/app/public/
+/laravel/storage/framework/cache/
+/laravel/storage/framework/sessions/
+/laravel/storage/framework/testing/
+/laravel/storage/framework/views/
+/laravel/storage/logs/
+/laravel/bootstrap/cache/
+/laravel/.phpunit.result.cache
+/laravel/phpunit.xml
+
+# ─── Python / FastAPI ─────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+/extractor/.env
+/extractor/venv/
+/extractor/.venv/
+env/
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# ─── Node / Vite ──────────────────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+dist/
+.vite/
+
+# ─── Docker ───────────────────────────────────────────────────────────────────
+.docker/
+docker-compose.override.yml
+docker-compose.prod.yml
+
+# ─── OS ───────────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# ─── IDE ──────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+.fleet/
+
+# ─── Logs & temp ──────────────────────────────────────────────────────────────
+*.log
+*.tmp
+*.temp
+*.cache
+.cache/
+
+# ─── Secrets ──────────────────────────────────────────────────────────────────
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+.secrets

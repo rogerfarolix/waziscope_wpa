@@ -1,0 +1,59 @@
+version: "3.9"
+
+services:
+
+  # ─── Service Python FastAPI ───────────────────────────────────────────────────
+  extractor:
+    build:
+      context: ./extractor
+      dockerfile: Dockerfile
+    container_name: waziscope-extractor
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+    networks:
+      - waziscope-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ─── Laravel App ──────────────────────────────────────────────────────────────
+  app:
+    image: php:8.3-fpm-alpine
+    container_name: waziscope-laravel
+    restart: unless-stopped
+    working_dir: /var/www/html
+    volumes:
+      - ./laravel:/var/www/html
+    environment:
+      - APP_ENV=production
+      - VIDEODOWN_EXTRACTOR_URL=http://extractor:8000
+    depends_on:
+      extractor:
+        condition: service_healthy
+    networks:
+      - waziscope-net
+
+  # ─── Nginx ────────────────────────────────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: waziscope-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./laravel:/var/www/html
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - app
+    networks:
+      - waziscope-net
+
+networks:
+  waziscope-net:
+    driver: bridge
