@@ -1,114 +1,150 @@
 /**
- * WaziScope Service Worker
- * Gère le cache offline et intercepte les Share Target
+ * WaziScope Service Worker v2
+ * ─ Cache offline
+ * ─ Share Target (intercepte les partages depuis TikTok, YouTube, etc.)
+ * ─ Background Sync prêt
  */
 
-const CACHE_NAME = 'waziscope-v1';
-const OFFLINE_URL = '/offline.html';
+const CACHE_NAME    = 'wzs-v2'
+const OFFLINE_URL   = '/offline.html'
 
-const STATIC_ASSETS = [
+const PRECACHE_URLS = [
     '/',
     '/manifest.json',
     '/offline.html',
-];
+]
 
-// ─── Installation ─────────────────────────────────────────────────────────────
-self.addEventListener('install', (event) => {
-    event.waitUntil(
-        caches.open(CACHE_NAME).then((cache) => {
-            return cache.addAll(STATIC_ASSETS);
-        })
-    );
-    self.skipWaiting();
-});
+// ─── Install ──────────────────────────────────────────────────────────────────
+self.addEventListener('install', (e) => {
+    e.waitUntil(
+        caches.open(CACHE_NAME).then((c) => c.addAll(PRECACHE_URLS))
+    )
+    // Forcer l'activation immédiate (pas besoin de fermer l'onglet)
+    self.skipWaiting()
+})
 
-// ─── Activation ───────────────────────────────────────────────────────────────
-self.addEventListener('activate', (event) => {
-    event.waitUntil(
+// ─── Activate ─────────────────────────────────────────────────────────────────
+self.addEventListener('activate', (e) => {
+    e.waitUntil(
         caches.keys().then((keys) =>
-            Promise.all(
-                keys
-                    .filter((key) => key !== CACHE_NAME)
-                    .map((key) => caches.delete(key))
-            )
+            Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
         )
-    );
-    self.clients.claim();
-});
+    )
+    self.clients.claim()
+})
 
-// ─── Fetch & Share Target ─────────────────────────────────────────────────────
-self.addEventListener('fetch', (event) => {
-    const url = new URL(event.request.url);
+// ─── Fetch ────────────────────────────────────────────────────────────────────
+self.addEventListener('fetch', (e) => {
+    const url = new URL(e.request.url)
 
-    // Intercepter le Share Target (/share?url=...)
-    if (url.pathname === '/share' && event.request.method === 'GET') {
-        event.respondWith(handleShareTarget(url));
-        return;
+    // ── 1. Share Target (/share?url=...) ──────────────────────────────────
+    if (url.pathname === '/share' && e.request.method === 'GET') {
+        e.respondWith(handleShareTarget(url))
+        return
     }
 
-    // Stratégie Network First pour les API
+    // ── 2. API calls → Network First (no cache) ───────────────────────────
     if (url.pathname.startsWith('/api/')) {
-        event.respondWith(networkFirst(event.request));
-        return;
+        e.respondWith(networkOnly(e.request))
+        return
     }
 
-    // Stratégie Cache First pour les assets statiques
-    event.respondWith(cacheFirst(event.request));
-});
+    // ── 3. Font / CDN → Cache First ───────────────────────────────────────
+    if (url.hostname.includes('fonts.g') || url.hostname.includes('gstatic')) {
+        e.respondWith(cacheFirst(e.request))
+        return
+    }
 
-// ─── Gestion du Share Target ──────────────────────────────────────────────────
+    // ── 4. App shell → Stale-While-Revalidate ────────────────────────────
+    e.respondWith(staleWhileRevalidate(e.request))
+})
+
+// ─── Share Target handler ─────────────────────────────────────────────────────
 async function handleShareTarget(url) {
-    // Extraire l'URL partagée (peut venir de ?url= ou ?text=)
-    let sharedUrl = url.searchParams.get('url')
-                 || url.searchParams.get('text')
-                 || '';
+    // Récupérer l'URL partagée depuis les query params
+    let sharedUrl = url.searchParams.get('url') || ''
 
-    // Parfois le texte contient l'URL (ex: TikTok met le lien dans le text)
-    if (!sharedUrl.startsWith('http')) {
-        const textParam = url.searchParams.get('text') || '';
-        const urlMatch = textParam.match(/https?:\/\/[^\s]+/);
-        if (urlMatch) sharedUrl = urlMatch[0];
+    // Fallback: chercher une URL dans le champ "text"
+    if (!sharedUrl || !sharedUrl.startsWith('http')) {
+        const textParam = url.searchParams.get('text') || ''
+        const match     = textParam.match(/https?:\/\/[^\s]+/)
+        sharedUrl = match ? match[0] : (sharedUrl || textParam)
     }
 
-    // Notifier tous les clients ouverts
-    const clients = await self.clients.matchAll({ includeUncontrolled: true, type: 'window' });
+    // Nettoyer les tracking params courants
+    sharedUrl = cleanUrl(sharedUrl)
+
+    // Notifier tous les clients Vue ouverts
+    const clients = await self.clients.matchAll({ includeUncontrolled: true, type: 'window' })
 
     if (clients.length > 0) {
-        clients[0].postMessage({ type: 'SHARE_TARGET', url: sharedUrl });
-        // Rediriger vers la page principale
-        return Response.redirect('/?shared=' + encodeURIComponent(sharedUrl), 303);
+        // Envoyer le message à la première fenêtre ouverte
+        clients[0].postMessage({ type: 'SHARE_TARGET', url: sharedUrl })
+        // Focaliser la fenêtre si elle est minimisée
+        try { await clients[0].focus() } catch { /* fenêtre ne peut pas être focalisée */ }
+        return Response.redirect('/?shared=' + encodeURIComponent(sharedUrl), 303)
     }
 
-    // Ouvrir l'app si pas de client ouvert
-    await self.clients.openWindow('/?shared=' + encodeURIComponent(sharedUrl));
-    return Response.redirect('/?shared=' + encodeURIComponent(sharedUrl), 303);
+    // Aucune fenêtre ouverte → ouvrir l'app
+    await self.clients.openWindow('/?shared=' + encodeURIComponent(sharedUrl))
+    return Response.redirect('/?shared=' + encodeURIComponent(sharedUrl), 303)
 }
 
-// ─── Stratégies de cache ──────────────────────────────────────────────────────
-async function networkFirst(request) {
+// Nettoyage des URLs de tracking courants (TikTok, YouTube...)
+function cleanUrl(url) {
+    if (!url) return url
     try {
-        const response = await fetch(request);
-        return response;
+        const u = new URL(url)
+        // Supprimer les paramètres de tracking courants
+        const trackingParams = [
+            '_r', 'is_from_webapp', 'sender_device', 'share_app_name',
+            'social_sharing_id', 'utm_source', 'utm_medium', 'utm_campaign',
+            'si', 'feature', 'ab_channel',
+        ]
+        trackingParams.forEach((p) => u.searchParams.delete(p))
+        return u.toString()
     } catch {
-        const cached = await caches.match(request);
-        return cached || new Response(JSON.stringify({ error: 'Offline' }), {
-            headers: { 'Content-Type': 'application/json' }
-        });
+        return url
     }
 }
 
-async function cacheFirst(request) {
-    const cached = await caches.match(request);
-    if (cached) return cached;
+// ─── Cache strategies ─────────────────────────────────────────────────────────
+
+async function networkOnly(req) {
+    try {
+        return await fetch(req)
+    } catch {
+        return new Response(JSON.stringify({ success: false, message: 'Offline' }), {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' },
+        })
+    }
+}
+
+async function cacheFirst(req) {
+    const cached = await caches.match(req)
+    if (cached) return cached
 
     try {
-        const response = await fetch(request);
-        if (response.ok) {
-            const cache = await caches.open(CACHE_NAME);
-            cache.put(request, response.clone());
+        const res = await fetch(req)
+        if (res.ok) {
+            const cache = await caches.open(CACHE_NAME)
+            cache.put(req, res.clone())
         }
-        return response;
+        return res
     } catch {
-        return caches.match(OFFLINE_URL) || new Response('Offline');
+        return caches.match(OFFLINE_URL) || new Response('Offline')
     }
+}
+
+async function staleWhileRevalidate(req) {
+    const cache  = await caches.open(CACHE_NAME)
+    const cached = await cache.match(req)
+
+    const fetchPromise = fetch(req).then((res) => {
+        if (res.ok) cache.put(req, res.clone())
+        return res
+    }).catch(() => null)
+
+    return cached || await fetchPromise || caches.match(OFFLINE_URL) || new Response('Offline')
 }

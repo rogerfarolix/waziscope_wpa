@@ -1,155 +1,223 @@
 <template>
-  <div class="history-page">
+  <div class="history">
     <div class="container">
-      <div class="page-header">
+
+      <!-- Header -->
+      <div class="page-hd">
         <div>
           <h1 class="page-title">Historique</h1>
-          <p class="page-sub">{{ items.length }} vidéo{{ items.length > 1 ? 's' : '' }} téléchargée{{ items.length > 1 ? 's' : '' }}</p>
+          <p class="page-sub">
+            {{ items.length }}
+            téléchargement{{ items.length !== 1 ? 's' : '' }}
+          </p>
         </div>
-        <button v-if="items.length" @click="clearHistory" class="btn btn--ghost btn--sm">
-          🗑 Tout effacer
+        <button v-if="items.length" class="wz-btn wz-btn--ghost wz-btn--sm" @click="clearAll">
+          <Trash2 :size="13" />
+          Tout effacer
         </button>
       </div>
 
-      <!-- Liste -->
-      <div v-if="items.length" class="history-list">
-        <div
-          v-for="item in items"
-          :key="item.id"
-          class="history-item"
-        >
-          <div class="history-thumb">
+      <!-- List -->
+      <transition-group name="hist" tag="div" class="hist-list" v-if="items.length">
+        <div v-for="item in items" :key="item.id" class="hist-item">
+
+          <!-- Thumb -->
+          <div class="hist-thumb">
             <img v-if="item.thumbnail" :src="item.thumbnail" :alt="item.title" />
-            <div v-else class="no-thumb">{{ getPlatformIcon(item.platform) }}</div>
-            <span :class="['platform-dot', `platform-dot--${item.platform}`]"></span>
+            <div v-else class="hist-thumb__fallback">
+              <component :is="platformIcon(item.platform)" :size="20" />
+            </div>
+            <span :class="['hist-plat', `hist-plat--${item.platform}`]">
+              <component :is="platformIcon(item.platform)" :size="10" />
+            </span>
           </div>
-          <div class="history-info">
-            <p class="history-title">{{ item.title }}</p>
-            <span class="history-date">{{ formatDate(item.date) }}</span>
+
+          <!-- Info -->
+          <div class="hist-info">
+            <p class="hist-title">{{ item.title }}</p>
+            <span class="hist-date">
+              <Clock :size="11" />
+              {{ fmtDate(item.date) }}
+            </span>
           </div>
-          <a
-            v-if="item.url"
-            :href="`/api/v1/download?url=${encodeURIComponent(item.url)}&filename=${encodeURIComponent(item.title + '.mp4')}`"
-            :download="item.title + '.mp4'"
-            class="btn btn--ghost btn--sm"
-          >⬇</a>
-          <button @click="removeItem(item.id)" class="btn btn--ghost btn--sm history-del">✕</button>
+
+          <!-- Actions -->
+          <div class="hist-actions">
+            <a
+              v-if="item.url"
+              :href="`/api/v1/download?url=${encodeURIComponent(item.url)}&filename=${encodeURIComponent(item.title + '.mp4')}`"
+              :download="item.title + '.mp4'"
+              class="wz-btn wz-btn--outline wz-btn--sm"
+            >
+              <Download :size="13" />
+            </a>
+            <button class="wz-btn wz-btn--ghost wz-btn--sm del-btn" @click="remove(item.id)">
+              <X :size="13" />
+            </button>
+          </div>
         </div>
+      </transition-group>
+
+      <!-- Empty state -->
+      <div v-else class="empty">
+        <div class="empty__icon">
+          <ClockFading :size="36" />
+        </div>
+        <h3 class="empty__title">Aucun téléchargement</h3>
+        <p class="empty__sub">Les vidéos que tu télécharges apparaîtront ici</p>
+        <router-link to="/" class="wz-btn wz-btn--mint">
+          <DownloadCloud :size="15" />
+          Télécharger une vidéo
+        </router-link>
       </div>
 
-      <!-- Vide -->
-      <div v-else class="empty-state">
-        <div class="empty-icon">📂</div>
-        <h3>Aucun téléchargement</h3>
-        <p>Les vidéos que tu télécharges apparaîtront ici</p>
-        <router-link to="/" class="btn btn--primary">Télécharger une vidéo</router-link>
-      </div>
     </div>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import {
+  Clock, Trash2, Download, X, DownloadCloud,
+  Music2, Youtube, Pin, Facebook, Instagram, Linkedin, Twitter, Film
+} from 'lucide-vue-next'
+
+// Lucide doesn't have ClockFading, use Clock with opacity
+import { Clock as ClockFading } from 'lucide-vue-next'
 
 const items = ref([])
 
 onMounted(() => {
-  items.value = JSON.parse(localStorage.getItem('waziscope_history') || '[]')
+  items.value = JSON.parse(localStorage.getItem('wzs_history') || '[]')
 })
 
-const removeItem = (id) => {
+const remove = (id) => {
   items.value = items.value.filter(i => i.id !== id)
-  localStorage.setItem('waziscope_history', JSON.stringify(items.value))
+  localStorage.setItem('wzs_history', JSON.stringify(items.value))
 }
 
-const clearHistory = () => {
+const clearAll = () => {
   items.value = []
-  localStorage.removeItem('waziscope_history')
+  localStorage.removeItem('wzs_history')
 }
 
-const formatDate = (iso) => {
-  const d = new Date(iso)
-  const now = new Date()
-  const diff = now - d
-  if (diff < 60000)      return 'À l\'instant'
-  if (diff < 3600000)    return `Il y a ${Math.floor(diff / 60000)} min`
-  if (diff < 86400000)   return `Il y a ${Math.floor(diff / 3600000)}h`
+const platformIcon = (id) => ({
+  tiktok: Music2, youtube: Youtube, pinterest: Pin,
+  facebook: Facebook, instagram: Instagram,
+  linkedin: Linkedin, twitter: Twitter,
+}[id] || Film)
+
+const fmtDate = (iso) => {
+  const d    = new Date(iso)
+  const diff = Date.now() - d
+  if (diff < 60000)    return 'À l\'instant'
+  if (diff < 3600000)  return `Il y a ${Math.floor(diff / 60000)} min`
+  if (diff < 86400000) return `Il y a ${Math.floor(diff / 3600000)} h`
   return d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })
 }
-
-const getPlatformIcon = (p) => ({ tiktok: '🎵', pinterest: '📌', facebook: '📘' })[p] || '🎬'
 </script>
 
 <style scoped>
-.history-page { padding: 32px 0 64px; }
-.container { max-width: 600px; margin: 0 auto; padding: 0 20px; }
+.history  { padding: 36px 0 80px; }
 
-.page-header {
-  display: flex;
-  align-items: flex-start;
+/* Header */
+.page-hd  {
+  display: flex; align-items: flex-start;
   justify-content: space-between;
   margin-bottom: 28px;
+  gap: 12px;
 }
 .page-title {
   font-family: var(--font-display);
   font-size: 28px;
   font-weight: 800;
 }
-.page-sub { color: var(--text-muted); font-size: 14px; margin-top: 4px; }
+.page-sub { color: var(--text-md); font-size: 13.5px; margin-top: 3px; }
 
-.history-list { display: flex; flex-direction: column; gap: 10px; }
+/* List */
+.hist-list { display: flex; flex-direction: column; gap: 8px; }
 
-.history-item {
+.hist-item {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 14px;
-  background: var(--bg-card);
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--bg-1);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  transition: border-color var(--transition);
+  border-radius: var(--r-lg);
+  transition: border-color 0.18s var(--ease);
 }
-.history-item:hover { border-color: var(--border-hover); }
+.hist-item:hover { border-color: var(--border-md); }
 
-.history-thumb {
+.hist-thumb {
   position: relative;
   width: 64px; height: 48px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   overflow: hidden;
   flex-shrink: 0;
-  background: var(--bg-hover);
+  background: var(--bg-2);
 }
-.history-thumb img { width: 100%; height: 100%; object-fit: cover; }
-.no-thumb {
+.hist-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.hist-thumb__fallback {
   width: 100%; height: 100%;
   display: flex; align-items: center; justify-content: center;
-  font-size: 20px;
+  color: var(--text-lo);
 }
-.platform-dot {
+
+.hist-plat {
   position: absolute;
   bottom: 3px; right: 3px;
-  width: 8px; height: 8px;
-  border-radius: 50%;
+  width: 16px; height: 16px;
+  border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
 }
-.platform-dot--tiktok    { background: var(--tiktok); }
-.platform-dot--pinterest { background: var(--pinterest); }
-.platform-dot--facebook  { background: var(--facebook); }
+.hist-plat--tiktok    { background: var(--col-tiktok); }
+.hist-plat--youtube   { background: var(--col-youtube); }
+.hist-plat--pinterest { background: var(--col-pinterest); }
+.hist-plat--facebook  { background: var(--col-facebook); }
+.hist-plat--instagram { background: var(--col-instagram); }
+.hist-plat--linkedin  { background: var(--col-linkedin); }
+.hist-plat--twitter   { background: var(--col-twitter); }
 
-.history-info { flex: 1; min-width: 0; }
-.history-title {
+.hist-info { flex: 1; min-width: 0; }
+.hist-title {
   font-size: 13px; font-weight: 500;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  margin-bottom: 3px;
 }
-.history-date { font-size: 11px; color: var(--text-muted); }
-.history-del { color: var(--text-dim); }
-.history-del:hover { color: var(--danger); border-color: var(--danger); }
+.hist-date {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 11px; color: var(--text-md);
+}
 
-.empty-state {
+.hist-actions { display: flex; gap: 5px; flex-shrink: 0; }
+.del-btn { color: var(--text-lo); }
+.del-btn:hover { color: var(--danger) !important; }
+
+/* Empty */
+.empty {
   text-align: center;
-  padding: 80px 24px;
-  color: var(--text-muted);
+  padding: 80px 20px;
 }
-.empty-icon { font-size: 56px; margin-bottom: 16px; }
-.empty-state h3 { font-family: var(--font-display); font-size: 20px; color: var(--text); margin-bottom: 8px; }
-.empty-state p { margin-bottom: 24px; }
+.empty__icon {
+  width: 72px; height: 72px;
+  background: var(--bg-2);
+  border-radius: var(--r-xl);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-lo);
+  margin: 0 auto 20px;
+}
+.empty__title {
+  font-family: var(--font-display);
+  font-size: 20px; font-weight: 700;
+  margin-bottom: 8px;
+}
+.empty__sub { color: var(--text-md); font-size: 14px; margin-bottom: 24px; }
+
+/* Transitions */
+.hist-enter-active { transition: all 0.28s var(--ease); }
+.hist-leave-active { transition: all 0.22s var(--ease); position: absolute; width: 100%; }
+.hist-enter-from   { opacity: 0; transform: translateX(-8px); }
+.hist-leave-to     { opacity: 0; transform: translateX(8px); }
+.hist-move         { transition: transform 0.28s var(--ease); }
 </style>

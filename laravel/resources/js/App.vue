@@ -1,34 +1,40 @@
 <template>
   <div id="waziscope-app">
-    <!-- Nav -->
-    <nav class="nav-bar">
-      <div class="nav-logo">
-        <span class="logo-icon">⬇</span>
-        <span class="logo-text">Wazi<em>Scope</em></span>
-      </div>
-      <div class="nav-links">
-        <router-link to="/" class="nav-link">Accueil</router-link>
-        <router-link to="/history" class="nav-link">
-          Historique
-          <span v-if="historyCount > 0" class="badge">{{ historyCount }}</span>
-        </router-link>
-      </div>
-    </nav>
 
-    <!-- Toast notifications -->
-    <transition-group name="toast" tag="div" class="toast-container">
-      <div
-        v-for="toast in toasts"
-        :key="toast.id"
-        :class="['toast', `toast--${toast.type}`]"
-      >
-        <span class="toast-icon">{{ toast.icon }}</span>
-        <span class="toast-msg">{{ toast.message }}</span>
+    <!-- ── Nav ──────────────────────────────────────────────────────────── -->
+    <header class="nav">
+      <div class="nav__inner">
+        <router-link to="/" class="nav__logo">
+          <span class="nav__logo-mark">
+            <DownloadCloud :size="16" />
+          </span>
+          <span class="nav__logo-text">Wazi<em>Scope</em></span>
+        </router-link>
+
+        <nav class="nav__links">
+          <router-link to="/" class="nav__item">
+            <Home :size="15" />
+            <span>Accueil</span>
+          </router-link>
+          <router-link to="/history" class="nav__item">
+            <Clock :size="15" />
+            <span>Historique</span>
+            <span v-if="historyCount > 0" class="nav__badge">{{ historyCount }}</span>
+          </router-link>
+        </nav>
+      </div>
+    </header>
+
+    <!-- ── Toasts ────────────────────────────────────────────────────────── -->
+    <transition-group name="toast" tag="div" class="toasts">
+      <div v-for="t in toasts" :key="t.id" :class="['toast', `toast--${t.type}`]">
+        <component :is="toastIcon(t.type)" :size="15" />
+        <span>{{ t.message }}</span>
       </div>
     </transition-group>
 
-    <!-- Router View -->
-    <main class="main-content">
+    <!-- ── Router View ───────────────────────────────────────────────────── -->
+    <main>
       <router-view v-slot="{ Component }">
         <transition name="page" mode="out-in">
           <component :is="Component" @notify="showToast" />
@@ -36,78 +42,85 @@
       </router-view>
     </main>
 
-    <!-- Install PWA Banner -->
+    <!-- ── PWA Install Banner ────────────────────────────────────────────── -->
     <transition name="slide-up">
-      <div v-if="showInstallBanner" class="install-banner">
-        <div class="install-banner__content">
-          <span class="install-banner__icon">📲</span>
-          <div class="install-banner__text">
+      <div v-if="showInstall" class="install-bar">
+        <div class="install-bar__left">
+          <span class="install-bar__icon"><Smartphone :size="20" /></span>
+          <div>
             <strong>Installer WaziScope</strong>
-            <p>Apparaît dans "Partager" pour télécharger directement</p>
+            <p>Apparaît dans "Partager" pour télécharger en 1 tap</p>
           </div>
         </div>
-        <div class="install-banner__actions">
-          <button @click="installPWA" class="btn btn--primary btn--sm">Installer</button>
-          <button @click="dismissInstall" class="btn btn--ghost btn--sm">Plus tard</button>
+        <div class="install-bar__actions">
+          <button class="wz-btn wz-btn--mint wz-btn--sm" @click="installPWA">Installer</button>
+          <button class="wz-btn wz-btn--ghost wz-btn--sm" @click="dismissInstall">
+            <X :size="14" />
+          </button>
         </div>
       </div>
     </transition>
+
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, provide } from 'vue'
 import { useRouter } from 'vue-router'
+import {
+  DownloadCloud, Home, Clock, CheckCircle2, AlertCircle,
+  Info, X, Smartphone
+} from 'lucide-vue-next'
 
 const router = useRouter()
 
 // ─── Toasts ──────────────────────────────────────────────────────────────────
 const toasts = ref([])
-let toastId = 0
+let toastId  = 0
 
-const showToast = ({ message, type = 'info', icon = 'ℹ️' }) => {
+const toastIcon = (type) => ({
+  success: CheckCircle2,
+  danger:  AlertCircle,
+  warning: AlertCircle,
+  info:    Info,
+}[type] || Info)
+
+const showToast = ({ message, type = 'info' }) => {
   const id = ++toastId
-  toasts.value.push({ id, message, type, icon })
-  setTimeout(() => {
-    toasts.value = toasts.value.filter(t => t.id !== id)
-  }, 3500)
+  toasts.value.push({ id, message, type })
+  setTimeout(() => { toasts.value = toasts.value.filter(t => t.id !== id) }, 3500)
 }
 provide('notify', showToast)
 
-// ─── Historique ───────────────────────────────────────────────────────────────
+// ─── Historique count ─────────────────────────────────────────────────────────
 const historyCount = computed(() => {
-  try {
-    return JSON.parse(localStorage.getItem('waziscope_history') || '[]').length
-  } catch { return 0 }
+  try { return JSON.parse(localStorage.getItem('wzs_history') || '[]').length } catch { return 0 }
 })
 
-// ─── Install PWA ──────────────────────────────────────────────────────────────
+// ─── PWA Install ─────────────────────────────────────────────────────────────
 const deferredPrompt = ref(null)
-const showInstallBanner = ref(false)
+const showInstall    = ref(false)
 
 onMounted(() => {
-  // Vérifier si déjà installé ou si banner déjà rejeté
-  const dismissed = localStorage.getItem('install_dismissed')
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches
-
+  const dismissed    = localStorage.getItem('wzs_install_dismissed')
   if (isStandalone || dismissed) return
 
   window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault()
     deferredPrompt.value = e
-    setTimeout(() => { showInstallBanner.value = true }, 2000)
+    setTimeout(() => { showInstall.value = true }, 2500)
   })
 
-  // Share Target : URL passée via query param ?shared=
-  const params = new URLSearchParams(window.location.search)
+  // Share Target via query param
+  const params    = new URLSearchParams(window.location.search)
   const sharedUrl = params.get('shared')
-  if (sharedUrl) {
-    router.push({ name: 'home', query: { url: sharedUrl } })
-  }
+  if (sharedUrl) router.push({ name: 'home', query: { url: sharedUrl } })
 
-  // Écouter les events du SW
-  window.addEventListener('waziscope:share', (e) => {
-    router.push({ name: 'home', query: { url: e.detail.url } })
+  navigator.serviceWorker?.addEventListener('message', (e) => {
+    if (e.data?.type === 'SHARE_TARGET') {
+      window.dispatchEvent(new CustomEvent('wzs:share', { detail: { url: e.data.url } }))
+    }
   })
 })
 
@@ -115,271 +128,304 @@ const installPWA = async () => {
   if (!deferredPrompt.value) return
   deferredPrompt.value.prompt()
   const { outcome } = await deferredPrompt.value.userChoice
-  if (outcome === 'accepted') {
-    showToast({ message: 'WaziScope installé !', type: 'success', icon: '✅' })
-  }
+  if (outcome === 'accepted') showToast({ message: 'WaziScope installé !', type: 'success' })
   deferredPrompt.value = null
-  showInstallBanner.value = false
+  showInstall.value    = false
 }
 
 const dismissInstall = () => {
-  showInstallBanner.value = false
-  localStorage.setItem('install_dismissed', '1')
+  showInstall.value = false
+  localStorage.setItem('wzs_install_dismissed', '1')
 }
 </script>
 
 <style>
-/* ─── CSS Variables ─────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────────────────────
+   WAZISCOPE — Design System
+   Fonts: Bricolage Grotesque (display) · Outfit (body) · Fira Code (mono)
+   Accent: Mint #1bffa4 on near-black #080b0f
+───────────────────────────────────────────────────────────────────────────── */
+
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=Outfit:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap');
+
 :root {
-  --bg:           #0a0a0f;
-  --bg-card:      #13131a;
-  --bg-hover:     #1a1a24;
-  --border:       rgba(255,255,255,0.07);
-  --border-hover: rgba(255,255,255,0.15);
+  /* Surfaces */
+  --bg:          #080b0f;
+  --bg-1:        #0e1219;
+  --bg-2:        #141a24;
+  --bg-3:        #1b2233;
 
-  /* Accents per platform */
-  --tiktok:    #ff0050;
-  --pinterest: #e60023;
-  --facebook:  #1877f2;
-  --success:   #22c55e;
-  --warning:   #f59e0b;
-  --danger:    #ef4444;
+  /* Borders */
+  --border:      rgba(255,255,255,0.06);
+  --border-md:   rgba(255,255,255,0.11);
+  --border-hi:   rgba(255,255,255,0.2);
 
-  /* Primary gradient */
-  --grad: linear-gradient(135deg, #ff0050 0%, #7928ca 50%, #1877f2 100%);
+  /* Accent — mint */
+  --mint:        #1bffa4;
+  --mint-dim:    rgba(27,255,164,0.12);
+  --mint-glow:   rgba(27,255,164,0.25);
 
-  --text:     #f0f0f5;
-  --text-muted: #6b6b80;
-  --text-dim:   #3a3a50;
+  /* Platform palette */
+  --col-tiktok:    #ff2d55;
+  --col-youtube:   #ff0033;
+  --col-pinterest: #e60023;
+  --col-facebook:  #1877f2;
+  --col-instagram: #e1306c;
+  --col-linkedin:  #0a66c2;
+  --col-twitter:   #1da1f2;
 
-  --radius:   16px;
-  --radius-sm: 8px;
-  --radius-lg: 24px;
+  /* State */
+  --success: #22c55e;
+  --danger:  #f43f5e;
+  --warning: #f59e0b;
 
-  --font-display: 'Syne', sans-serif;
-  --font-body:    'DM Sans', sans-serif;
-  --font-mono:    'JetBrains Mono', monospace;
+  /* Text */
+  --text-hi:  #eef2f8;
+  --text-md:  #7a8499;
+  --text-lo:  #3a4155;
 
-  --nav-height: 64px;
-  --transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  /* Radii */
+  --r-sm:  6px;
+  --r-md:  12px;
+  --r-lg:  18px;
+  --r-xl:  24px;
+  --r-2xl: 32px;
+
+  /* Fonts */
+  --font-display: 'Bricolage Grotesque', sans-serif;
+  --font-body:    'Outfit', sans-serif;
+  --font-mono:    'Fira Code', monospace;
+
+  --nav-h: 60px;
+  --ease:  cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* ─── Reset ──────────────────────────────────────────────────────────────────── */
+/* ── Reset ─────────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
 html { scroll-behavior: smooth; }
-
 body {
   background: var(--bg);
-  color: var(--text);
+  color: var(--text-hi);
   font-family: var(--font-body);
   font-size: 15px;
   line-height: 1.6;
   min-height: 100dvh;
   -webkit-font-smoothing: antialiased;
 }
+img { display: block; max-width: 100%; }
+a   { color: inherit; text-decoration: none; }
 
-@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
-
-/* ─── Nav ─────────────────────────────────────────────────────────────────────── */
-.nav-bar {
+/* ── Nav ───────────────────────────────────────────────────────────────────── */
+.nav {
   position: fixed;
-  top: 0; left: 0; right: 0;
+  inset: 0 0 auto 0;
   z-index: 100;
-  height: var(--nav-height);
+  height: var(--nav-h);
+  border-bottom: 1px solid var(--border);
+  background: rgba(8, 11, 15, 0.82);
+  backdrop-filter: blur(18px) saturate(1.6);
+}
+.nav__inner {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 0 20px;
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 24px;
-  background: rgba(10, 10, 15, 0.85);
-  backdrop-filter: blur(20px) saturate(1.5);
-  border-bottom: 1px solid var(--border);
 }
 
-.nav-logo {
+.nav__logo {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
+}
+.nav__logo-mark {
+  width: 30px; height: 30px;
+  background: var(--mint);
+  border-radius: var(--r-sm);
+  display: flex; align-items: center; justify-content: center;
+  color: #000;
+  flex-shrink: 0;
+}
+.nav__logo-text {
   font-family: var(--font-display);
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 700;
-  color: var(--text);
-  text-decoration: none;
+  color: var(--text-hi);
 }
-.logo-icon {
-  width: 32px; height: 32px;
-  background: var(--grad);
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-}
-.logo-text em {
+.nav__logo-text em {
   font-style: normal;
-  background: var(--grad);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: var(--mint);
 }
 
-.nav-links {
+.nav__links {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
 }
-.nav-link {
+.nav__item {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 14px;
-  border-radius: var(--radius-sm);
-  color: var(--text-muted);
-  text-decoration: none;
-  font-size: 14px;
+  padding: 6px 12px;
+  border-radius: var(--r-sm);
+  color: var(--text-md);
+  font-size: 13.5px;
   font-weight: 500;
-  transition: all var(--transition);
+  transition: all 0.2s var(--ease);
 }
-.nav-link:hover,
-.nav-link.router-link-active {
-  color: var(--text);
-  background: var(--bg-hover);
+.nav__item:hover, .nav__item.router-link-active {
+  color: var(--text-hi);
+  background: var(--bg-2);
 }
-.badge {
-  background: var(--tiktok);
-  color: white;
-  font-size: 10px;
+.nav__item.router-link-active { color: var(--mint); }
+.nav__badge {
+  background: var(--mint);
+  color: #000;
+  font-size: 9px;
   font-weight: 700;
-  padding: 1px 6px;
+  padding: 1px 5px;
   border-radius: 20px;
-  min-width: 18px;
+  min-width: 16px;
   text-align: center;
 }
 
-/* ─── Main ────────────────────────────────────────────────────────────────────── */
-.main-content {
-  margin-top: var(--nav-height);
-  min-height: calc(100dvh - var(--nav-height));
-}
-
-/* ─── Buttons ─────────────────────────────────────────────────────────────────── */
-.btn {
+/* ── Buttons ───────────────────────────────────────────────────────────────── */
+.wz-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 12px 24px;
+  gap: 7px;
+  padding: 11px 22px;
   border: none;
-  border-radius: var(--radius);
+  border-radius: var(--r-md);
   font-family: var(--font-body);
-  font-size: 15px;
+  font-size: 14.5px;
   font-weight: 600;
   cursor: pointer;
-  transition: all var(--transition);
-  text-decoration: none;
+  transition: all 0.2s var(--ease);
   white-space: nowrap;
 }
-.btn--primary {
-  background: var(--grad);
-  color: white;
+.wz-btn--mint {
+  background: var(--mint);
+  color: #000;
 }
-.btn--primary:hover { opacity: 0.9; transform: translateY(-1px); }
-.btn--primary:active { transform: translateY(0); }
+.wz-btn--mint:hover  { opacity: 0.88; transform: translateY(-1px); }
+.wz-btn--mint:active { transform: translateY(0); opacity: 1; }
 
-.btn--ghost {
+.wz-btn--outline {
   background: transparent;
-  color: var(--text-muted);
-  border: 1px solid var(--border);
+  color: var(--text-hi);
+  border: 1px solid var(--border-md);
 }
-.btn--ghost:hover {
-  border-color: var(--border-hover);
-  color: var(--text);
-  background: var(--bg-hover);
-}
-
-.btn--sm { padding: 7px 16px; font-size: 13px; border-radius: var(--radius-sm); }
-.btn--lg { padding: 16px 32px; font-size: 17px; }
-.btn--block { width: 100%; }
-
-.btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-  transform: none !important;
+.wz-btn--outline:hover {
+  border-color: var(--border-hi);
+  background: var(--bg-2);
 }
 
-/* ─── Toasts ──────────────────────────────────────────────────────────────────── */
-.toast-container {
+.wz-btn--ghost {
+  background: transparent;
+  color: var(--text-md);
+}
+.wz-btn--ghost:hover { background: var(--bg-2); color: var(--text-hi); }
+
+.wz-btn--sm  { padding: 6px 14px; font-size: 13px; border-radius: var(--r-sm); }
+.wz-btn--lg  { padding: 14px 30px; font-size: 16px; }
+.wz-btn--blk { width: 100%; }
+.wz-btn:disabled { opacity: 0.35; cursor: not-allowed; transform: none !important; }
+
+/* ── Toasts ────────────────────────────────────────────────────────────────── */
+.toasts {
   position: fixed;
-  top: calc(var(--nav-height) + 12px);
+  top: calc(var(--nav-h) + 14px);
   right: 16px;
-  z-index: 200;
+  z-index: 300;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-
 .toast {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 18px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-size: 14px;
-  min-width: 260px;
-  max-width: 340px;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  gap: 9px;
+  padding: 11px 16px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-md);
+  border-radius: var(--r-md);
+  font-size: 13.5px;
+  min-width: 240px;
+  max-width: 320px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.5);
+  color: var(--text-hi);
 }
-.toast--success { border-color: var(--success); }
-.toast--danger  { border-color: var(--danger); }
-.toast--warning { border-color: var(--warning); }
+.toast--success { border-color: var(--success); color: var(--success); }
+.toast--danger  { border-color: var(--danger);  color: var(--danger); }
+.toast--warning { border-color: var(--warning); color: var(--warning); }
 
-.toast-enter-active, .toast-leave-active { transition: all 0.3s ease; }
-.toast-enter-from { opacity: 0; transform: translateX(20px); }
-.toast-leave-to   { opacity: 0; transform: translateX(20px); }
+.toast-enter-active, .toast-leave-active { transition: all 0.28s var(--ease); }
+.toast-enter-from { opacity: 0; transform: translateX(16px); }
+.toast-leave-to   { opacity: 0; transform: translateX(16px); }
 
-/* ─── Install Banner ──────────────────────────────────────────────────────────── */
-.install-banner {
+/* ── Install bar ───────────────────────────────────────────────────────────── */
+.install-bar {
   position: fixed;
-  bottom: 24px; left: 50%;
+  bottom: 20px;
+  left: 50%;
   transform: translateX(-50%);
-  z-index: 150;
+  z-index: 200;
   width: calc(100% - 32px);
   max-width: 480px;
-  background: var(--bg-card);
-  border: 1px solid rgba(255,255,255,0.1);
-  border-radius: var(--radius-lg);
-  padding: 16px 20px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-md);
+  border-radius: var(--r-xl);
+  padding: 14px 18px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  box-shadow: 0 16px 48px rgba(0,0,0,0.6);
+  gap: 14px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.7);
 }
-.install-banner__content {
+.install-bar__left {
   display: flex;
   align-items: center;
   gap: 12px;
   flex: 1;
 }
-.install-banner__icon { font-size: 24px; }
-.install-banner__text strong { display: block; font-size: 14px; color: var(--text); }
-.install-banner__text p { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
-.install-banner__actions { display: flex; gap: 8px; flex-shrink: 0; }
+.install-bar__icon {
+  width: 38px; height: 38px;
+  background: var(--mint-dim);
+  color: var(--mint);
+  border-radius: var(--r-sm);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.install-bar__left strong { display: block; font-size: 13.5px; font-weight: 600; }
+.install-bar__left p      { font-size: 11.5px; color: var(--text-md); margin-top: 1px; }
+.install-bar__actions     { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 
 .slide-up-enter-active { transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); }
-.slide-up-leave-active { transition: all 0.25s ease; }
-.slide-up-enter-from  { opacity: 0; transform: translate(-50%, 20px); }
-.slide-up-leave-to    { opacity: 0; transform: translate(-50%, 20px); }
+.slide-up-leave-active { transition: all 0.22s var(--ease); }
+.slide-up-enter-from   { opacity: 0; transform: translate(-50%, 20px); }
+.slide-up-leave-to     { opacity: 0; transform: translate(-50%, 20px); }
 
-/* ─── Page transitions ────────────────────────────────────────────────────────── */
-.page-enter-active { transition: all 0.25s ease; }
-.page-leave-active { transition: all 0.2s ease; }
-.page-enter-from   { opacity: 0; transform: translateY(8px); }
-.page-leave-to     { opacity: 0; transform: translateY(-4px); }
+/* ── Page transitions ──────────────────────────────────────────────────────── */
+.page-enter-active { transition: all 0.22s var(--ease); }
+.page-leave-active { transition: all 0.18s var(--ease); }
+.page-enter-from   { opacity: 0; transform: translateY(6px); }
+.page-leave-to     { opacity: 0; }
 
-/* ─── Scrollbar ───────────────────────────────────────────────────────────────── */
-::-webkit-scrollbar { width: 5px; }
+main { margin-top: var(--nav-h); min-height: calc(100dvh - var(--nav-h)); }
+
+/* ── Scrollbar ─────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar       { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--text-dim); border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: var(--text-lo); border-radius: 2px; }
+
+/* ── Utility ───────────────────────────────────────────────────────────────── */
+.container { max-width: 640px; margin: 0 auto; padding: 0 20px; }
+
+/* Spinner */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin 0.85s linear infinite; }
 </style>

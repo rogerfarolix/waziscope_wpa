@@ -1,6 +1,9 @@
-fastapi==0.111.0
-uvicorn[standard]==0.29.0
-yt-dlp==2024.5.27
-pydantic==2.7.1
-httpx==0.27.0
-python-multipart==0.0.9
+# WaziScope Extractor - Dépendances
+# Installer avec : pip install -r requirements.txt
+
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+yt-dlp>=2024.11.4         # Toujours garder à jour : pip install -U yt-dlp
+pydantic==2.10.3
+httpx==0.28.0
+python-multipart==0.0.20

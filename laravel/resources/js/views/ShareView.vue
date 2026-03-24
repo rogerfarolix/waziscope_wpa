@@ -1,12 +1,27 @@
 <template>
   <div class="share-page">
     <div class="share-card">
-      <div class="share-spinner">
-        <div class="ring"></div>
-        <span class="share-icon">⬇</span>
+
+      <!-- Animated ring -->
+      <div class="ring-wrap" aria-hidden="true">
+        <div class="ring ring--outer"></div>
+        <div class="ring ring--inner"></div>
+        <span class="ring-icon">
+          <DownloadCloud :size="28" />
+        </span>
       </div>
-      <h2 class="share-title">Réception en cours…</h2>
-      <p class="share-url">{{ displayUrl }}</p>
+
+      <div class="share-copy">
+        <h2 class="share-title">Réception en cours…</h2>
+        <p class="share-sub">Extraction automatique du lien partagé</p>
+      </div>
+
+      <!-- URL preview -->
+      <div v-if="displayUrl" class="share-url-wrap">
+        <Link2 :size="12" />
+        <span class="share-url">{{ displayUrl }}</span>
+      </div>
+
     </div>
   </div>
 </template>
@@ -14,40 +29,39 @@
 <script setup>
 import { onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { DownloadCloud, Link2 } from 'lucide-vue-next'
 
 const route  = useRoute()
 const router = useRouter()
 
 const sharedUrl = computed(() => {
-  return route.query.url
-      || route.query.text
-      || route.query.shared
-      || ''
+  let url = route.query.url || route.query.text || route.query.shared || ''
+  // TikTok met parfois l'URL dans le champ "text" avec du texte autour
+  if (url && !String(url).startsWith('http')) {
+    const match = String(url).match(/https?:\/\/[^\s]+/)
+    if (match) url = match[0]
+  }
+  return String(url)
 })
 
 const displayUrl = computed(() => {
   const u = sharedUrl.value
-  return u.length > 60 ? u.substring(0, 60) + '…' : u
+  return u.length > 55 ? u.substring(0, 55) + '…' : u
 })
 
 onMounted(() => {
-  // Extraire l'URL si elle est dans un texte (TikTok met parfois le lien dans "text")
-  let url = sharedUrl.value
-  if (url && !url.startsWith('http')) {
-    const match = url.match(/https?:\/\/[^\s]+/)
-    if (match) url = match[0]
-  }
-
-  // Rediriger vers Home avec l'URL pour lancer l'extraction auto
   setTimeout(() => {
-    router.replace({ name: 'home', query: { url: url || '' } })
-  }, 800)
+    router.replace({
+      name:  'home',
+      query: { url: sharedUrl.value || '' },
+    })
+  }, 900)
 })
 </script>
 
 <style scoped>
 .share-page {
-  min-height: calc(100dvh - var(--nav-height));
+  min-height: calc(100dvh - var(--nav-h));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -59,38 +73,41 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 20px;
+  gap: 22px;
+  max-width: 320px;
 }
 
-.share-spinner {
+/* Ring animation */
+.ring-wrap {
   position: relative;
-  width: 80px;
-  height: 80px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  width: 90px; height: 90px;
+  display: flex; align-items: center; justify-content: center;
 }
 
 .ring {
-  position: absolute;
-  inset: 0;
+  position: absolute; inset: 0;
   border-radius: 50%;
-  border: 3px solid transparent;
-  border-top-color: #ff0050;
-  border-right-color: #7928ca;
-  animation: spin 1s linear infinite;
+  border: 2px solid transparent;
+}
+.ring--outer {
+  border-top-color: var(--mint);
+  border-right-color: rgba(27,255,164,0.3);
+  animation: spin 1.1s linear infinite;
+}
+.ring--inner {
+  inset: 12px;
+  border-bottom-color: rgba(27,255,164,0.5);
+  border-left-color: transparent;
+  animation: spin 0.75s linear infinite reverse;
 }
 
-@keyframes spin { to { transform: rotate(360deg); } }
-
-.share-icon {
-  font-size: 28px;
-  animation: pulse 1s ease-in-out infinite;
+.ring-icon {
+  color: var(--mint);
+  animation: pulse 1.4s ease-in-out infinite;
 }
-
 @keyframes pulse {
-  0%, 100% { transform: scale(1); }
-  50%       { transform: scale(1.15); }
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%       { transform: scale(1.12); opacity: 0.75; }
 }
 
 .share-title {
@@ -98,12 +115,21 @@ onMounted(() => {
   font-size: 22px;
   font-weight: 700;
 }
+.share-sub { font-size: 13.5px; color: var(--text-md); margin-top: -14px; }
 
+.share-url-wrap {
+  display: flex; align-items: center; gap: 7px;
+  background: var(--bg-1);
+  border: 1px solid var(--border-md);
+  border-radius: var(--r-md);
+  padding: 9px 14px;
+  max-width: 100%;
+}
 .share-url {
   font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--text-muted);
-  max-width: 320px;
+  font-size: 11.5px;
+  color: var(--text-md);
   word-break: break-all;
+  text-align: left;
 }
 </style>

@@ -5,22 +5,24 @@ use Illuminate\Support\Facades\Route;
 
 /*
 |--------------------------------------------------------------------------
-| WaziScope API Routes
+| WaziScope API Routes — v2
 |--------------------------------------------------------------------------
 */
 
 Route::prefix('v1')->group(function () {
 
-    // Health check
-    Route::get('/health', fn () => response()->json(['status' => 'ok', 'service' => 'waziscope-laravel']));
-
-    // Plateformes supportées
+    // ── Système ────────────────────────────────────────────────────────────
+    Route::get('/health',    [VideoController::class, 'health']);
     Route::get('/platforms', [VideoController::class, 'platforms']);
 
-    // Extraction vidéo (reçoit l'URL, retourne les infos + lien de dl)
-    Route::post('/extract', [VideoController::class, 'extract']);
+    // Détection plateforme rapide (sans extraction)
+    Route::get('/detect',    [VideoController::class, 'detect']);
 
-    // Proxy de téléchargement (stream la vidéo via Laravel pour éviter CORS)
-    Route::get('/download', [VideoController::class, 'download']);
+    // ── Extraction ─────────────────────────────────────────────────────────
+    Route::post('/extract',        [VideoController::class, 'extract']);
+    Route::post('/extract/batch',  [VideoController::class, 'extractBatch']);
+
+    // ── Proxy de téléchargement ────────────────────────────────────────────
+    Route::get('/download',  [VideoController::class, 'download']);
 
 });

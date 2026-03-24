@@ -1,21 +1,22 @@
 {
   "name": "WaziScope",
   "short_name": "WaziScope",
-  "description": "Télécharge des vidéos TikTok, Pinterest et Facebook sans watermark",
+  "description": "Télécharge des vidéos TikTok (sans watermark), YouTube, Pinterest, Facebook, Instagram, LinkedIn et Twitter directement depuis les apps.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "orientation": "portrait",
-  "background_color": "#0a0a0f",
-  "theme_color": "#0a0a0f",
+  "orientation": "portrait-primary",
+  "background_color": "#080b0f",
+  "theme_color": "#080b0f",
   "lang": "fr",
+  "dir": "ltr",
   "categories": ["utilities", "productivity"],
 
   "icons": [
-    { "src": "/icons/icon-72.png",   "sizes": "72x72",   "type": "image/png", "purpose": "any maskable" },
-    { "src": "/icons/icon-96.png",   "sizes": "96x96",   "type": "image/png", "purpose": "any maskable" },
-    { "src": "/icons/icon-128.png",  "sizes": "128x128", "type": "image/png", "purpose": "any maskable" },
-    { "src": "/icons/icon-144.png",  "sizes": "144x144", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icons/icon-72.png",   "sizes": "72x72",   "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-96.png",   "sizes": "96x96",   "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-128.png",  "sizes": "128x128", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-144.png",  "sizes": "144x144", "type": "image/png", "purpose": "any" },
     { "src": "/icons/icon-192.png",  "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
     { "src": "/icons/icon-512.png",  "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
   ],
@@ -43,13 +44,21 @@
 
   "shortcuts": [
     {
-      "name": "Coller une URL",
+      "name": "Coller et télécharger",
       "short_name": "Coller",
-      "description": "Coller une URL vidéo directement",
+      "description": "Coller une URL vidéo depuis le presse-papiers",
       "url": "/?action=paste",
-      "icons": [{ "src": "/icons/shortcut-paste.png", "sizes": "96x96" }]
+      "icons": [{ "src": "/icons/icon-96.png", "sizes": "96x96" }]
+    },
+    {
+      "name": "Historique",
+      "short_name": "Historique",
+      "description": "Voir mes téléchargements récents",
+      "url": "/history",
+      "icons": [{ "src": "/icons/icon-96.png", "sizes": "96x96" }]
     }
   ],
 
-  "prefer_related_applications": false
+  "prefer_related_applications": false,
+  "handle_links": "preferred"
 }
