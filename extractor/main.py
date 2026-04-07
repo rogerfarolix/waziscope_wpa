@@ -1,8 +1,9 @@
 """
-WaziScope - FastAPI Extractor Service v2.1
+WaziScope - FastAPI Extractor Service v2.2
 Fixes:
-  - Pinterest: fallback scraper HTML quand yt-dlp échoue (API bloquée)
-  - TikTok: headers CDN corrects pour le proxy
+  - Facebook: résolution share/r/ + scraper HTML fallback (reels, videos)
+  - Pinterest: fallback scraper HTML quand yt-dlp échoue
+  - TikTok: headers CDN corrects
   - pin.it: résolution de redirection avant extraction
 """
 
@@ -17,6 +18,7 @@ import logging
 import urllib.request
 import urllib.parse
 import json
+import gzip
 from typing import Optional, Any
 from concurrent.futures import ThreadPoolExecutor
 
@@ -35,7 +37,7 @@ executor = ThreadPoolExecutor(max_workers=4)
 app = FastAPI(
     title="WaziScope Extractor",
     description="Extraire les URLs de vidéos depuis TikTok, Pinterest, Facebook, YouTube, LinkedIn",
-    version="2.1.0",
+    version="2.2.0",
 )
 
 app.add_middleware(
@@ -77,7 +79,6 @@ class VideoInfo(BaseModel):
     best_url: Optional[str] = None
     no_watermark_url: Optional[str] = None
     audio_only_url: Optional[str] = None
-    # Headers nécessaires pour télécharger cette vidéo (surtout TikTok)
     required_headers: dict = {}
 
 
@@ -148,7 +149,7 @@ UA_ANDROID = (
 )
 
 
-# ─── Headers par plateforme (pour le proxy de téléchargement) ─────────────────
+# ─── Headers par plateforme ───────────────────────────────────────────────────
 
 DOWNLOAD_HEADERS: dict[str, dict] = {
     "tiktok": {
@@ -172,11 +173,13 @@ DOWNLOAD_HEADERS: dict[str, dict] = {
         "User-Agent": UA_ANDROID,
         "Referer": "https://www.facebook.com/",
         "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.8",
+        "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.7",
     },
     "instagram": {
         "User-Agent": UA_ANDROID,
         "Referer": "https://www.instagram.com/",
         "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.8",
+        "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.7",
     },
     "linkedin": {
         "User-Agent": UA_DESKTOP,
@@ -256,6 +259,7 @@ def get_ydl_opts(platform: str) -> dict:
                 **base["http_headers"],
                 "User-Agent": UA_ANDROID,
                 "Referer": "https://www.facebook.com/",
+                "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.7",
             },
         })
 
@@ -264,7 +268,9 @@ def get_ydl_opts(platform: str) -> dict:
             "format": "best[ext=mp4]/best",
             "http_headers": {
                 **base["http_headers"],
+                "User-Agent": UA_ANDROID,
                 "Referer": "https://www.instagram.com/",
+                "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.7",
             },
         })
 
@@ -292,43 +298,228 @@ def get_ydl_opts(platform: str) -> dict:
     return base
 
 
-# ─── Pinterest custom scraper (fallback quand yt-dlp échoue) ─────────────────
+# ─── Helpers HTTP communs ─────────────────────────────────────────────────────
 
-def _resolve_pin_it(url: str) -> str:
-    """Résout une URL pin.it en URL pinterest.com complète."""
-    if "pin.it" not in url:
-        return url
+def _http_get_html(url: str, headers: dict, timeout: int = 20) -> Optional[str]:
+    """Effectue un GET HTTP et retourne le HTML décompressé."""
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read()
+            try:
+                return gzip.decompress(raw).decode("utf-8", errors="replace")
+            except Exception:
+                return raw.decode("utf-8", errors="replace")
+    except Exception as e:
+        logger.warning(f"HTTP GET error [{url[:60]}]: {e}")
+        return None
+
+
+def _resolve_redirect(url: str, ua: str = UA_ANDROID) -> str:
+    """Résout les redirections HTTP d'une URL raccourcie."""
     try:
         req = urllib.request.Request(
             url,
-            headers={"User-Agent": UA_MOBILE},
-            method="HEAD",
+            headers={"User-Agent": ua, "Accept": "text/html,*/*"},
         )
-        opener = urllib.request.build_opener(
-            urllib.request.HTTPRedirectHandler()
-        )
-        # Suivre les redirections manuellement
+        opener = urllib.request.build_opener(urllib.request.HTTPRedirectHandler())
         resp = opener.open(req, timeout=10)
         return resp.geturl()
     except Exception:
         try:
-            # Fallback: GET request
-            req = urllib.request.Request(url, headers={"User-Agent": UA_MOBILE})
+            req = urllib.request.Request(url, headers={"User-Agent": ua})
             resp = urllib.request.urlopen(req, timeout=10)
             return resp.geturl()
         except Exception:
             return url
 
 
+# ─── Facebook scraper ─────────────────────────────────────────────────────────
+
+def _resolve_facebook_url(url: str) -> str:
+    """
+    Résout les URLs Facebook raccourcies :
+      - facebook.com/share/r/XXXX  (vidéo reel partagée)
+      - facebook.com/share/v/XXXX  (vidéo partagée)
+      - fb.watch/XXXX
+      - fb.com/...
+    """
+    needs_resolve = (
+        re.search(r'facebook\.com/share/', url, re.I) or
+        re.search(r'fb\.watch/', url, re.I) or
+        re.search(r'^https?://fb\.com/', url, re.I)
+    )
+    if not needs_resolve:
+        return url
+
+    resolved = _resolve_redirect(url, UA_ANDROID)
+    if resolved != url:
+        logger.info(f"Facebook URL resolved: {url[:80]} → {resolved[:80]}")
+    return resolved
+
+
+def _facebook_scrape(url: str) -> Optional[VideoInfo]:
+    """
+    Scraper HTML Facebook.
+    Cherche les URLs vidéo dans les données JSON embarquées dans la page.
+    Fonctionne pour les vidéos publiques et la plupart des Reels.
+    """
+    headers = {
+        "User-Agent": UA_ANDROID,
+        "Accept": "text/html,application/xhtml+xml,*/*;q=0.9",
+        "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.7",
+        "Accept-Encoding": "gzip, deflate",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+    }
+
+    html = _http_get_html(url, headers)
+    if not html:
+        return None
+
+    # Décoder les séquences d'échappement JSON Unicode
+    html = html.replace('\\u0026', '&').replace('\\u003C', '<').replace('\\u003E', '>')
+
+    # Patterns priorités : HD > SD
+    video_patterns = [
+        r'"playable_url_quality_hd"\s*:\s*"(https?://[^"\\]+(?:\\.[^"\\]*)*)"',
+        r'"browser_native_hd_url"\s*:\s*"(https?://[^"\\]+(?:\\.[^"\\]*)*)"',
+        r'"hd_src"\s*:\s*"(https?://[^"\\]+(?:\\.[^"\\]*)*)"',
+        r'"playable_url"\s*:\s*"(https?://[^"\\]+(?:\\.[^"\\]*)*)"',
+        r'"browser_native_sd_url"\s*:\s*"(https?://[^"\\]+(?:\\.[^"\\]*)*)"',
+        r'"sd_src"\s*:\s*"(https?://[^"\\]+(?:\\.[^"\\]*)*)"',
+        # Format alternatif dans __bbox
+        r'"video_url"\s*:\s*"(https?://[^"\\]+(?:\\.[^"\\]*)*\.mp4[^"\\]*)"',
+    ]
+
+    video_url = None
+    for pattern in video_patterns:
+        m = re.search(pattern, html)
+        if m:
+            candidate = m.group(1).replace('\\/', '/').replace('\\/','/')
+            if candidate.startswith('http'):
+                video_url = candidate
+                logger.debug(f"Facebook scraper found URL via pattern: {pattern[:40]}")
+                break
+
+    if not video_url:
+        logger.warning("Facebook scraper: aucune URL vidéo trouvée dans le HTML")
+        return None
+
+    # Titre
+    title = "Vidéo Facebook"
+    for tp in [
+        r'"title"\s*:\s*\{"text"\s*:\s*"([^"]{3,200})"',
+        r'<title[^>]*>([^<]{3,200})</title>',
+        r'property="og:title"\s+content="([^"]{3,200})"',
+        r'content="([^"]{3,200})"\s+property="og:title"',
+    ]:
+        m = re.search(tp, html)
+        if m:
+            t = m.group(1).strip()
+            if t and t.lower() not in ("facebook", ""):
+                title = t
+                break
+
+    # Thumbnail
+    thumbnail = None
+    for tp in [
+        r'"thumbnailImage"\s*:\s*\{"uri"\s*:\s*"([^"]+)"',
+        r'property="og:image"\s+content="([^"]+)"',
+        r'content="([^"]+)"\s+property="og:image"',
+    ]:
+        m = re.search(tp, html)
+        if m:
+            thumbnail = m.group(1).replace('\\/', '/')
+            break
+
+    return VideoInfo(
+        original_url=url,
+        title=title[:200],
+        thumbnail=thumbnail,
+        platform="facebook",
+        formats=[FormatInfo(format_id="0", ext="mp4", quality="best", url=video_url)],
+        best_url=video_url,
+        no_watermark_url=video_url,
+        required_headers=DOWNLOAD_HEADERS["facebook"],
+    )
+
+
+async def _extract_facebook(url: str) -> VideoInfo:
+    """
+    Extraction Facebook :
+    1. Résolution des URLs raccourcies (share/r/, fb.watch)
+    2. Tentative yt-dlp
+    3. Fallback scraper HTML
+    """
+    loop = asyncio.get_event_loop()
+
+    # 1. Résoudre les URLs raccourcies
+    url = await loop.run_in_executor(executor, _resolve_facebook_url, url)
+
+    # 2. Tenter yt-dlp
+    ydl_opts = get_ydl_opts("facebook")
+
+    def _ytdlp_extract():
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                return ydl.extract_info(url, download=False)
+        except Exception as e:
+            logger.debug(f"yt-dlp Facebook failed: {e}")
+            return None
+
+    info = await loop.run_in_executor(executor, _ytdlp_extract)
+
+    if info:
+        formats, best_url, no_watermark_url, audio_only_url = _parse_formats(info, "facebook")
+        if best_url:
+            return VideoInfo(
+                original_url=url,
+                title=info.get("title") or "Vidéo Facebook",
+                description=info.get("description"),
+                author=info.get("uploader"),
+                thumbnail=info.get("thumbnail"),
+                duration=info.get("duration"),
+                view_count=info.get("view_count"),
+                like_count=info.get("like_count"),
+                platform="facebook",
+                formats=formats,
+                best_url=best_url,
+                no_watermark_url=no_watermark_url,
+                audio_only_url=audio_only_url,
+                required_headers=DOWNLOAD_HEADERS["facebook"],
+            )
+
+    # 3. Fallback scraper HTML
+    logger.info("Facebook: yt-dlp failed, trying HTML scraper...")
+    result = await loop.run_in_executor(executor, _facebook_scrape, url)
+
+    if result:
+        return result
+
+    raise ValueError(
+        "Impossible d'extraire cette vidéo Facebook. "
+        "Les vidéos privées ou protégées ne sont pas accessibles. "
+        "Assurez-vous que la vidéo est publique."
+    )
+
+
+# ─── Pinterest scraper ────────────────────────────────────────────────────────
+
+def _resolve_pin_it(url: str) -> str:
+    """Résout une URL pin.it en URL pinterest.com complète."""
+    if "pin.it" not in url:
+        return url
+    resolved = _resolve_redirect(url, UA_MOBILE)
+    if resolved != url:
+        logger.info(f"pin.it resolved: {url} → {resolved[:80]}")
+    return resolved
+
+
 def _pinterest_scrape(url: str) -> Optional[VideoInfo]:
-    """
-    Scraper Pinterest HTML direct.
-    Pinterest embarque les données de la pin dans __PWS_DATA__ ou
-    window.__redux_data__ dans le HTML de la page.
-    """
-    # Résoudre pin.it d'abord
+    """Scraper Pinterest HTML direct."""
     resolved_url = _resolve_pin_it(url)
-    logger.info(f"Pinterest scrape: {resolved_url}")
+    logger.info(f"Pinterest scrape: {resolved_url[:80]}")
 
     headers = {
         "User-Agent": UA_MOBILE,
@@ -338,53 +529,46 @@ def _pinterest_scrape(url: str) -> Optional[VideoInfo]:
         "Accept-Encoding": "gzip, deflate",
     }
 
-    try:
-        req = urllib.request.Request(resolved_url, headers=headers)
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            raw = resp.read()
-            # Pinterest peut servir du gzip
-            try:
-                import gzip
-                html = gzip.decompress(raw).decode("utf-8", errors="replace")
-            except Exception:
-                html = raw.decode("utf-8", errors="replace")
-    except Exception as e:
-        logger.warning(f"Pinterest HTTP error: {e}")
+    html = _http_get_html(resolved_url, headers)
+    if not html:
         return None
 
-    # ── Chercher __PWS_DATA__ (format moderne Pinterest) ──────────────────
+    # __PWS_DATA__
     pws_match = re.search(
         r'<script[^>]+id="__PWS_DATA__"[^>]*>\s*(\{.*?\})\s*</script>',
-        html,
-        re.DOTALL,
+        html, re.DOTALL,
     )
     if pws_match:
         try:
             pws = json.loads(pws_match.group(1))
-            return _parse_pinterest_pws(pws, resolved_url)
+            result = _parse_pinterest_pws(pws, resolved_url)
+            if result:
+                return result
         except Exception as e:
             logger.debug(f"PWS parse error: {e}")
 
-    # ── Chercher window.__redux_data__ (ancien format) ────────────────────
+    # __redux_data__
     redux_match = re.search(
         r'window\.__redux_data__\s*=\s*(\{.*?\});\s*(?:window|</script>)',
-        html,
-        re.DOTALL,
+        html, re.DOTALL,
     )
     if redux_match:
         try:
             redux = json.loads(redux_match.group(1))
-            return _parse_pinterest_redux(redux, resolved_url)
+            result = _parse_pinterest_redux(redux, resolved_url)
+            if result:
+                return result
         except Exception as e:
             logger.debug(f"Redux parse error: {e}")
 
-    # ── Chercher les URLs vidéo directement dans le HTML ──────────────────
-    # Pinterest met les URLs m3u8 et mp4 dans le HTML en JSON
-    video_urls = re.findall(r'"(?:url|V_720P|V_1080P|V_480P|V_240P)"\s*:\s*"(https://[^"]+(?:\.mp4|\.m3u8)[^"]*)"', html)
+    # Recherche directe URLs vidéo
+    video_urls = re.findall(
+        r'"(?:url|V_720P|V_1080P|V_480P|V_240P)"\s*:\s*"(https://[^"]+(?:\.mp4|\.m3u8)[^"]*)"',
+        html
+    )
     if video_urls:
         best_url = video_urls[-1]
         title_match = re.search(r'"title"\s*:\s*"([^"]{3,200})"', html)
-        thumb_match = re.search(r'"image_signature"\s*:\s*"([^"]+)"', html)
         title = title_match.group(1) if title_match else "Vidéo Pinterest"
         return VideoInfo(
             original_url=url,
@@ -401,31 +585,21 @@ def _pinterest_scrape(url: str) -> Optional[VideoInfo]:
 
 
 def _parse_pinterest_pws(data: dict, original_url: str) -> Optional[VideoInfo]:
-    """Parse le bloc __PWS_DATA__ de Pinterest."""
     try:
-        # Naviguer dans la structure Pinterest PWS
         props = data.get("props", {})
         page_props = props.get("pageProps", {})
-
-        # Chercher dans initialReduxState ou les données de pin
         initial = page_props.get("initialReduxState", {})
-
-        # Chercher le pin dans les ressources
         pins = (
             initial.get("pins", {})
             or initial.get("resources", {}).get("PinResource", {})
         )
-
         video_url = None
-        title     = "Vidéo Pinterest"
+        title = "Vidéo Pinterest"
         thumbnail = None
 
         for pin_id, pin_data in pins.items():
             if isinstance(pin_data, dict):
-                # Chercher l'objet pin avec les données
                 actual = pin_data.get("data", pin_data)
-
-                # Chercher les vidéos
                 videos = actual.get("videos", {}) or actual.get("story_pin_data", {})
                 if videos:
                     video_list = videos.get("video_list", {})
@@ -434,10 +608,8 @@ def _parse_pinterest_pws(data: dict, original_url: str) -> Optional[VideoInfo]:
                             video_url = video_list[quality].get("url")
                             if video_url:
                                 break
-
-                title     = actual.get("title") or actual.get("description") or "Vidéo Pinterest"
+                title = actual.get("title") or actual.get("description") or "Vidéo Pinterest"
                 thumbnail = actual.get("images", {}).get("orig", {}).get("url")
-
                 if video_url:
                     break
 
@@ -454,14 +626,12 @@ def _parse_pinterest_pws(data: dict, original_url: str) -> Optional[VideoInfo]:
             no_watermark_url=video_url,
             required_headers=DOWNLOAD_HEADERS["pinterest"],
         )
-
     except Exception as e:
         logger.debug(f"PWS parse exception: {e}")
         return None
 
 
 def _parse_pinterest_redux(data: dict, original_url: str) -> Optional[VideoInfo]:
-    """Parse le bloc __redux_data__ de Pinterest."""
     try:
         pins = data.get("pins", {})
         for pin_id, pin_data in pins.items():
@@ -476,7 +646,7 @@ def _parse_pinterest_redux(data: dict, original_url: str) -> Optional[VideoInfo]
                     if video_url:
                         break
             if video_url:
-                title     = pin_data.get("title") or pin_data.get("description") or "Vidéo Pinterest"
+                title = pin_data.get("title") or pin_data.get("description") or "Vidéo Pinterest"
                 thumbnail = pin_data.get("images", {}).get("orig", {}).get("url")
                 return VideoInfo(
                     original_url=original_url,
@@ -491,6 +661,57 @@ def _parse_pinterest_redux(data: dict, original_url: str) -> Optional[VideoInfo]
     except Exception as e:
         logger.debug(f"Redux parse exception: {e}")
     return None
+
+
+async def _extract_pinterest(url: str) -> VideoInfo:
+    """yt-dlp d'abord, puis fallback scraper HTML."""
+    loop = asyncio.get_event_loop()
+
+    if "pin.it" in url:
+        resolved = await loop.run_in_executor(executor, _resolve_pin_it, url)
+        url = resolved
+
+    ydl_opts = get_ydl_opts("pinterest")
+
+    def _ytdlp_extract():
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                return ydl.extract_info(url, download=False)
+        except Exception as e:
+            logger.debug(f"yt-dlp Pinterest failed: {e}")
+            return None
+
+    info = await loop.run_in_executor(executor, _ytdlp_extract)
+
+    if info:
+        formats, best_url, no_watermark_url, audio_only_url = _parse_formats(info, "pinterest")
+        if best_url:
+            return VideoInfo(
+                original_url=url,
+                title=info.get("title") or "Vidéo Pinterest",
+                description=info.get("description"),
+                author=info.get("uploader"),
+                thumbnail=info.get("thumbnail"),
+                duration=info.get("duration"),
+                platform="pinterest",
+                formats=formats,
+                best_url=best_url,
+                no_watermark_url=no_watermark_url,
+                audio_only_url=audio_only_url,
+                required_headers=DOWNLOAD_HEADERS["pinterest"],
+            )
+
+    logger.info("Pinterest: yt-dlp failed, trying HTML scraper...")
+    result = await loop.run_in_executor(executor, _pinterest_scrape, url)
+
+    if result:
+        return result
+
+    raise ValueError(
+        "Impossible d'extraire cette vidéo Pinterest. "
+        "Vérifiez que l'URL est une vidéo publique. "
+        "Si l'erreur persiste, essayez l'URL complète pinterest.com/pin/..."
+    )
 
 
 # ─── Helpers de parsing formats yt-dlp ────────────────────────────────────────
@@ -574,11 +795,14 @@ async def extract_video_info(url: str) -> VideoInfo:
             f"Plateforme non reconnue. Supportées : {', '.join(sorted(SUPPORTED_PLATFORMS))}"
         )
 
-    # ── Pinterest : essayer yt-dlp puis fallback scraper ──────────────────
+    # Plateformes avec fallback scraper dédié
     if platform == "pinterest":
         return await _extract_pinterest(url)
 
-    # ── Autres plateformes : yt-dlp direct ───────────────────────────────
+    if platform == "facebook":
+        return await _extract_facebook(url)
+
+    # Autres plateformes : yt-dlp direct
     ydl_opts = get_ydl_opts(platform)
     loop     = asyncio.get_event_loop()
 
@@ -606,8 +830,6 @@ async def extract_video_info(url: str) -> VideoInfo:
         raise ValueError("Aucune information trouvée.")
 
     formats, best_url, no_watermark_url, audio_only_url = _parse_formats(info, platform)
-
-    # Headers de téléchargement requis (surtout TikTok)
     required_headers = DOWNLOAD_HEADERS.get(platform, {})
 
     return VideoInfo(
@@ -628,63 +850,6 @@ async def extract_video_info(url: str) -> VideoInfo:
     )
 
 
-async def _extract_pinterest(url: str) -> VideoInfo:
-    """
-    Essaie yt-dlp en premier, puis le scraper HTML en fallback.
-    """
-    loop = asyncio.get_event_loop()
-
-    # 1. Résoudre pin.it → pinterest.com
-    if "pin.it" in url:
-        resolved = await loop.run_in_executor(executor, _resolve_pin_it, url)
-        logger.info(f"pin.it resolved: {url} → {resolved}")
-        url = resolved
-
-    # 2. Tenter yt-dlp
-    ydl_opts = get_ydl_opts("pinterest")
-
-    def _ytdlp_extract():
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                return ydl.extract_info(url, download=False)
-        except Exception as e:
-            logger.debug(f"yt-dlp Pinterest failed: {e}")
-            return None
-
-    info = await loop.run_in_executor(executor, _ytdlp_extract)
-
-    if info:
-        formats, best_url, no_watermark_url, audio_only_url = _parse_formats(info, "pinterest")
-        if best_url:
-            return VideoInfo(
-                original_url=url,
-                title=info.get("title") or "Vidéo Pinterest",
-                description=info.get("description"),
-                author=info.get("uploader"),
-                thumbnail=info.get("thumbnail"),
-                duration=info.get("duration"),
-                platform="pinterest",
-                formats=formats,
-                best_url=best_url,
-                no_watermark_url=no_watermark_url,
-                audio_only_url=audio_only_url,
-                required_headers=DOWNLOAD_HEADERS["pinterest"],
-            )
-
-    # 3. Fallback scraper HTML
-    logger.info("Pinterest: yt-dlp failed, trying HTML scraper...")
-    result = await loop.run_in_executor(executor, _pinterest_scrape, url)
-
-    if result:
-        return result
-
-    raise ValueError(
-        "Impossible d'extraire cette vidéo Pinterest. "
-        "Vérifiez que l'URL est une vidéo publique et non un lien raccourci invalide. "
-        "Si l'erreur persiste, Pinterest a peut-être bloqué l'accès — essayez l'URL complète pinterest.com/pin/..."
-    )
-
-
 # ─── Routes ──────────────────────────────────────────────────────────────────
 
 @app.get("/health", tags=["Système"])
@@ -692,7 +857,7 @@ async def health():
     return {
         "status": "ok",
         "service": "waziscope-extractor",
-        "version": "2.1.0",
+        "version": "2.2.0",
         "yt_dlp_version": yt_dlp.version.__version__,
     }
 
@@ -704,7 +869,7 @@ async def get_platforms():
             {"id": "tiktok",    "name": "TikTok",    "no_watermark": True,  "notes": "Sans watermark via API mobile"},
             {"id": "youtube",   "name": "YouTube",   "no_watermark": False, "notes": "HD jusqu'à 1080p"},
             {"id": "pinterest", "name": "Pinterest", "no_watermark": False, "notes": "MP4 direct (scraper intégré)"},
-            {"id": "facebook",  "name": "Facebook",  "no_watermark": False, "notes": "Vidéos publiques"},
+            {"id": "facebook",  "name": "Facebook",  "no_watermark": False, "notes": "Vidéos & Reels publics (scraper intégré)"},
             {"id": "instagram", "name": "Instagram", "no_watermark": False, "notes": "Reels & posts publics"},
             {"id": "linkedin",  "name": "LinkedIn",  "no_watermark": False, "notes": "Vidéos natives"},
             {"id": "twitter",   "name": "Twitter/X", "no_watermark": False, "notes": "Vidéos tweets"},
@@ -736,10 +901,10 @@ async def extract(url: str = Query(..., description="URL de la vidéo")):
 
 @app.post("/extract/batch", response_model=BatchResponse, tags=["Extraction"])
 async def extract_batch(body: BatchRequest):
-    tasks      = [extract_video_info(url.strip()) for url in body.urls]
-    raw        = await asyncio.gather(*tasks, return_exceptions=True)
-    results    = []
-    succeeded  = failed = 0
+    tasks     = [extract_video_info(url.strip()) for url in body.urls]
+    raw       = await asyncio.gather(*tasks, return_exceptions=True)
+    results   = []
+    succeeded = failed = 0
     for r in raw:
         if isinstance(r, Exception):
             results.append(ExtractResponse(success=False, error=str(r)))
@@ -761,7 +926,6 @@ async def detect(url: str = Query(...)):
 
 @app.get("/headers/{platform}", tags=["Utilitaires"])
 async def get_download_headers(platform: str):
-    """Retourne les headers nécessaires pour télécharger depuis cette plateforme."""
     headers = DOWNLOAD_HEADERS.get(platform, {})
     return {"platform": platform, "headers": headers}
 

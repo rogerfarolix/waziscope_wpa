@@ -3,13 +3,12 @@
 
     <!-- ── Hero ─────────────────────────────────────────────────────────── -->
     <section class="hero">
-      <!-- Noise grain overlay -->
       <div class="hero__noise" aria-hidden="true"></div>
-      <!-- Glows -->
       <div class="glow glow--a" aria-hidden="true"></div>
       <div class="glow glow--b" aria-hidden="true"></div>
 
       <div class="hero__body container">
+        <!-- Platforms pill -->
         <div class="hero__pill">
           <Zap :size="11" />
           <span>TikTok · YouTube · Pinterest · Facebook · Instagram · LinkedIn · Twitter</span>
@@ -25,6 +24,26 @@
           Installe l'app, appuie sur <strong>"Partager"</strong> dans TikTok
           ou YouTube — WaziScope reçoit le lien et télécharge automatiquement.
         </p>
+
+        <!-- Feature badges -->
+        <div class="hero__features">
+          <span class="feat-badge">
+            <ShieldCheck :size="12" />
+            TikTok sans watermark
+          </span>
+          <span class="feat-badge">
+            <ShieldOff :size="12" />
+            Suppression de métadonnées
+          </span>
+          <span class="feat-badge">
+            <Music :size="12" />
+            Audio seul
+          </span>
+          <span class="feat-badge">
+            <Layers :size="12" />
+            Multi-qualité
+          </span>
+        </div>
       </div>
     </section>
 
@@ -46,7 +65,7 @@
           </div>
         </div>
 
-        <!-- Input card (shadcn Card style) -->
+        <!-- Input card -->
         <div class="card input-card">
           <div class="input-row">
             <div :class="['url-wrap', { 'url-wrap--focus': inputFocused }]">
@@ -81,7 +100,6 @@
             </button>
           </div>
 
-          <!-- Paste from clipboard button -->
           <div class="input-hints">
             <button class="hint-btn" @click="pasteFromClipboard">
               <Clipboard :size="12" />
@@ -92,7 +110,7 @@
           </div>
         </div>
 
-        <!-- ── Loading skeleton ─────────────────────────────────────────── -->
+        <!-- Loading skeleton -->
         <div v-if="loading" class="card result-card result-card--skeleton">
           <div class="sk sk--thumb"></div>
           <div class="sk-body">
@@ -102,7 +120,7 @@
           </div>
         </div>
 
-        <!-- ── Result card ──────────────────────────────────────────────── -->
+        <!-- Result card -->
         <transition name="result">
           <div v-if="result && !loading" class="card result-card">
 
@@ -119,22 +137,19 @@
                 <component :is="platformIcon(result.platform)" :size="36" />
               </div>
 
-              <!-- Duration badge -->
               <span v-if="result.duration" class="duration-badge">
                 <Clock :size="10" />
                 {{ fmtDuration(result.duration) }}
               </span>
 
-              <!-- Platform badge -->
               <span :class="['plat-badge', `plat-badge--${result.platform}`]">
                 <component :is="platformIcon(result.platform)" :size="11" />
                 {{ result.platform }}
               </span>
             </div>
 
-            <!-- Info -->
+            <!-- Body -->
             <div class="result-body">
-              <!-- Title + author -->
               <div class="result-meta">
                 <h3 class="result-title">{{ result.title }}</h3>
                 <p v-if="result.author" class="result-author">
@@ -143,7 +158,6 @@
                 </p>
               </div>
 
-              <!-- Stats row -->
               <div v-if="result.view_count || result.like_count" class="result-stats">
                 <span v-if="result.view_count" class="stat">
                   <Eye :size="12" />
@@ -155,14 +169,14 @@
                 </span>
               </div>
 
-              <!-- No watermark callout -->
               <div v-if="result.platform === 'tiktok' && result.no_watermark_url" class="nowm-callout">
                 <ShieldCheck :size="13" />
                 <span>Sans watermark disponible</span>
               </div>
 
-              <!-- Download actions -->
+              <!-- ── Download actions ───────────────────────────────────── -->
               <div class="dl-actions">
+
                 <!-- Primary download -->
                 <a
                   :href="result.proxy_download_url || dlProxyUrl(result.no_watermark_url || result.best_url, result.title)"
@@ -174,19 +188,55 @@
                   <span>Télécharger{{ result.platform === 'tiktok' ? ' (sans watermark)' : '' }}</span>
                 </a>
 
-                <!-- Audio only (if available) -->
-                <a
-                  v-if="result.audio_only_url"
-                  :href="dlProxyUrl(result.audio_only_url, result.title + '_audio')"
-                  :download="safeFilename(result.title) + '.mp3'"
-                  class="wz-btn wz-btn--outline"
-                >
-                  <Music :size="14" />
-                  <span>Audio seulement</span>
-                </a>
+                <!-- Secondary row: strip + audio -->
+                <div class="dl-secondary">
+
+                  <!-- Strip metadata -->
+                  <a
+                    v-if="ffmpegAvailable && (result.proxy_strip_url || stripUrl(result))"
+                    :href="result.proxy_strip_url || stripUrl(result)"
+                    :download="safeFilename(result.title) + '_clean.mp4'"
+                    class="wz-btn wz-btn--outline dl-secondary__btn"
+                    title="Télécharger sans aucune métadonnée (titre, auteur, GPS, dates…)"
+                    @click="onDlClick(result)"
+                  >
+                    <ShieldOff :size="14" />
+                    <span>Sans métadonnées</span>
+                  </a>
+
+                  <!-- ffmpeg indispo -->
+                  <span
+                    v-else-if="!ffmpegAvailable"
+                    class="wz-btn wz-btn--ghost dl-secondary__btn dl-secondary__btn--disabled"
+                    title="ffmpeg non disponible sur ce serveur"
+                  >
+                    <ShieldOff :size="14" />
+                    <span>Sans métadonnées</span>
+                  </span>
+
+                  <!-- Audio only -->
+                  <a
+                    v-if="result.audio_only_url"
+                    :href="dlProxyUrl(result.audio_only_url, result.title + '_audio')"
+                    :download="safeFilename(result.title) + '.mp3'"
+                    class="wz-btn wz-btn--outline dl-secondary__btn"
+                  >
+                    <Music :size="14" />
+                    <span>Audio</span>
+                  </a>
+                </div>
               </div>
 
-              <!-- Formats list -->
+              <!-- Strip metadata info callout -->
+              <div v-if="ffmpegAvailable" class="strip-info">
+                <ShieldOff :size="11" />
+                <span>
+                  "Sans métadonnées" supprime le titre, l'auteur, les dates, le GPS
+                  et toute info personnelle sans re-encoder la vidéo.
+                </span>
+              </div>
+
+              <!-- Formats -->
               <div v-if="result.formats && result.formats.length > 1" class="formats-section">
                 <button class="formats-toggle" @click="showFormats = !showFormats">
                   <Layers :size="13" />
@@ -207,6 +257,17 @@
                       <span class="fmt-ext">{{ fmt.ext }}</span>
                       <span v-if="fmt.filesize" class="fmt-sz">{{ fmtSize(fmt.filesize) }}</span>
                       <span v-if="fmt.no_watermark" class="fmt-nowm">No WM</span>
+                      <!-- Strip icon per format -->
+                      <a
+                        v-if="ffmpegAvailable && fmt.strip_url"
+                        :href="fmt.strip_url"
+                        :download="`${safeFilename(result.title)}_${fmt.quality || fmt.format_id}_clean.mp4`"
+                        class="fmt-strip"
+                        title="Télécharger sans métadonnées"
+                        @click.stop
+                      >
+                        <ShieldOff :size="11" />
+                      </a>
                       <Download :size="12" class="fmt-dl" />
                     </a>
                   </div>
@@ -216,7 +277,7 @@
           </div>
         </transition>
 
-        <!-- ── Error ─────────────────────────────────────────────────────── -->
+        <!-- Error -->
         <transition name="result">
           <div v-if="errorMsg" class="error-card">
             <AlertCircle :size="17" />
@@ -251,6 +312,17 @@
             <p class="step__desc">{{ step.desc }}</p>
           </li>
         </ol>
+
+        <!-- Features grid -->
+        <div class="features-grid">
+          <div v-for="f in features" :key="f.title" class="feat-card">
+            <div class="feat-card__icon">
+              <component :is="f.icon" :size="20" />
+            </div>
+            <h4 class="feat-card__title">{{ f.title }}</h4>
+            <p class="feat-card__desc">{{ f.desc }}</p>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -263,25 +335,26 @@ import { useRoute } from 'vue-router'
 import axios from 'axios'
 import {
   DownloadCloud, Link2, X, Loader2, Clock, Music, Layers, ChevronDown,
-  Download, AlertCircle, ShieldCheck, UserRound, Eye, Heart,
+  Download, AlertCircle, ShieldCheck, ShieldOff, UserRound, Eye, Heart,
   Zap, Clipboard, Smartphone, Share2, AppWindow, Music2,
-  Youtube, Pin, Facebook, Instagram, Linkedin, Twitter, Film
+  Youtube, Pin, Facebook, Instagram, Linkedin, Twitter, Film,
 } from 'lucide-vue-next'
 
 const route  = useRoute()
 const notify = inject('notify')
 
-// ─── State ────────────────────────────────────────────────────────────────────
-const inputUrl        = ref('')
-const inputEl         = ref(null)
-const inputFocused    = ref(false)
-const loading         = ref(false)
-const result          = ref(null)
-const errorMsg        = ref(null)
-const showFormats     = ref(false)
+// ─── State ───────────────────────────────────────────────────────────────────
+const inputUrl         = ref('')
+const inputEl          = ref(null)
+const inputFocused     = ref(false)
+const loading          = ref(false)
+const result           = ref(null)
+const errorMsg         = ref(null)
+const showFormats      = ref(false)
 const detectedPlatform = ref(null)
+const ffmpegAvailable  = ref(false)   // true si ffmpeg est dispo côté serveur
 
-// ─── Platforms ────────────────────────────────────────────────────────────────
+// ─── Platforms ───────────────────────────────────────────────────────────────
 const platforms = ref([
   { id: 'tiktok',    name: 'TikTok',    no_watermark: true  },
   { id: 'youtube',   name: 'YouTube',   no_watermark: false },
@@ -293,26 +366,44 @@ const platforms = ref([
 ])
 
 const platformIcon = (id) => ({
-  tiktok:    Music2,
-  youtube:   Youtube,
-  pinterest: Pin,
-  facebook:  Facebook,
-  instagram: Instagram,
-  linkedin:  Linkedin,
-  twitter:   Twitter,
+  tiktok: Music2, youtube: Youtube, pinterest: Pin,
+  facebook: Facebook, instagram: Instagram, linkedin: Linkedin, twitter: Twitter,
 }[id] || Film)
 
-// ─── Steps ────────────────────────────────────────────────────────────────────
+// ─── Steps ───────────────────────────────────────────────────────────────────
 const steps = [
-  { icon: Smartphone, title: 'Installe WaziScope',     desc: 'Ajoute l\'app à ton écran d\'accueil depuis le navigateur.' },
-  { icon: AppWindow,  title: 'Ouvre TikTok / YouTube', desc: 'Trouve la vidéo que tu veux télécharger.' },
-  { icon: Share2,     title: 'Appuie sur Partager',    desc: 'WaziScope apparaît dans la liste des apps.' },
-  { icon: DownloadCloud, title: 'Téléchargement auto',  desc: 'Le lien arrive, l\'extraction démarre automatiquement.' },
+  { icon: Smartphone,   title: 'Installe WaziScope',     desc: 'Ajoute l\'app à ton écran d\'accueil depuis le navigateur.' },
+  { icon: AppWindow,    title: 'Ouvre TikTok / YouTube',  desc: 'Trouve la vidéo que tu veux télécharger.' },
+  { icon: Share2,       title: 'Appuie sur Partager',     desc: 'WaziScope apparaît dans la liste des apps.' },
+  { icon: DownloadCloud, title: 'Téléchargement auto',    desc: 'Le lien arrive, l\'extraction démarre automatiquement.' },
 ]
 
-// ─── Share Target ─────────────────────────────────────────────────────────────
+// ─── Feature cards ────────────────────────────────────────────────────────────
+const features = [
+  {
+    icon: ShieldCheck,
+    title: 'Sans watermark',
+    desc: 'Télécharge les vidéos TikTok sans le logo watermark via l\'API mobile officielle.',
+  },
+  {
+    icon: ShieldOff,
+    title: 'Suppression de métadonnées',
+    desc: 'Efface automatiquement toutes les métadonnées embarquées : titre, auteur, GPS, dates, infos de l\'appareil — sans re-encoder la vidéo.',
+  },
+  {
+    icon: Music,
+    title: 'Audio seul',
+    desc: 'Extrait uniquement la piste audio en MP3 depuis YouTube, TikTok et les autres plateformes.',
+  },
+  {
+    icon: Layers,
+    title: 'Multi-qualité',
+    desc: 'Choisis parmi toutes les résolutions disponibles : 1080p, 720p, 480p ou la meilleure qualité automatique.',
+  },
+]
+
+// ─── Mount ───────────────────────────────────────────────────────────────────
 onMounted(async () => {
-  // Depuis le query param (Share Target SW redirect)
   const sharedUrl = route.query.url || route.query.shared
   if (sharedUrl) {
     inputUrl.value = decodeURIComponent(String(sharedUrl))
@@ -320,25 +411,27 @@ onMounted(async () => {
     return
   }
 
-  // Depuis l'URL action=paste
   if (route.query.action === 'paste') {
     await pasteFromClipboard()
   }
 
-  // Écouter les partages entrants (message SW)
   window.addEventListener('wzs:share', (e) => {
     inputUrl.value = e.detail.url
     doExtract()
   })
 
-  // Charger les plateformes depuis l'API
+  // Charger les plateformes + vérifier ffmpeg
   try {
-    const res = await axios.get('/api/v1/platforms')
-    if (res.data?.platforms) platforms.value = res.data.platforms
-  } catch { /* garder le fallback */ }
+    const [platRes, capRes] = await Promise.all([
+      axios.get('/api/v1/platforms').catch(() => null),
+      axios.get('/api/v1/capabilities').catch(() => null),
+    ])
+    if (platRes?.data?.platforms) platforms.value = platRes.data.platforms
+    if (capRes?.data?.ffmpeg !== undefined) ffmpegAvailable.value = capRes.data.ffmpeg
+  } catch { /* garder fallback */ }
 })
 
-// ─── Clipboard ────────────────────────────────────────────────────────────────
+// ─── Clipboard ───────────────────────────────────────────────────────────────
 const pasteFromClipboard = async () => {
   try {
     const text = await navigator.clipboard.readText()
@@ -352,16 +445,16 @@ const pasteFromClipboard = async () => {
   }
 }
 
-// ─── Detect platform live ─────────────────────────────────────────────────────
+// ─── Platform detection ───────────────────────────────────────────────────────
 const detectPlatformFromUrl = (url) => {
   const u = url.toLowerCase()
-  if (u.includes('tiktok'))    return (detectedPlatform.value = 'tiktok')
-  if (u.includes('youtu'))     return (detectedPlatform.value = 'youtube')
-  if (u.includes('pin'))       return (detectedPlatform.value = 'pinterest')
-  if (u.includes('facebook') || u.includes('fb.'))  return (detectedPlatform.value = 'facebook')
-  if (u.includes('instagram')) return (detectedPlatform.value = 'instagram')
-  if (u.includes('linkedin'))  return (detectedPlatform.value = 'linkedin')
-  if (u.includes('twitter') || u.includes('x.com')) return (detectedPlatform.value = 'twitter')
+  if (u.includes('tiktok'))                             return (detectedPlatform.value = 'tiktok')
+  if (u.includes('youtu'))                              return (detectedPlatform.value = 'youtube')
+  if (u.includes('pin'))                                return (detectedPlatform.value = 'pinterest')
+  if (u.includes('facebook') || u.includes('fb.'))     return (detectedPlatform.value = 'facebook')
+  if (u.includes('instagram'))                          return (detectedPlatform.value = 'instagram')
+  if (u.includes('linkedin'))                           return (detectedPlatform.value = 'linkedin')
+  if (u.includes('twitter') || u.includes('x.com'))    return (detectedPlatform.value = 'twitter')
   detectedPlatform.value = null
 }
 
@@ -379,9 +472,9 @@ const doExtract = async () => {
   if (!url) return
 
   detectPlatformFromUrl(url)
-  loading.value    = true
-  result.value     = null
-  errorMsg.value   = null
+  loading.value     = true
+  result.value      = null
+  errorMsg.value    = null
   showFormats.value = false
 
   try {
@@ -392,7 +485,14 @@ const doExtract = async () => {
       errorMsg.value = data.message || 'Extraction échouée'
       return
     }
+
     result.value = data.data
+
+    // Mettre à jour la dispo ffmpeg depuis la réponse
+    if (data.ffmpeg_available !== undefined) {
+      ffmpegAvailable.value = data.ffmpeg_available
+    }
+
     notify({ message: 'Vidéo trouvée !', type: 'success' })
 
   } catch (e) {
@@ -403,27 +503,36 @@ const doExtract = async () => {
   }
 }
 
-// ─── Download ─────────────────────────────────────────────────────────────────
+// ─── URL builders ─────────────────────────────────────────────────────────────
 const dlProxyUrl = (url, title) => {
   if (!url) return '#'
   return `/api/v1/download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(safeFilename(title) + '.mp4')}`
 }
 
+const stripUrl = (video) => {
+  const url = video?.no_watermark_url || video?.best_url
+  if (!url) return '#'
+  return `/api/v1/strip?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(safeFilename(video.title))}&platform=${video.platform}`
+}
+
+// ─── History ─────────────────────────────────────────────────────────────────
 const onDlClick = (video) => {
-  const history = JSON.parse(localStorage.getItem('wzs_history') || '[]')
-  history.unshift({
-    id: Date.now(),
-    title: video.title,
-    thumbnail: video.thumbnail,
-    platform: video.platform,
-    url: video.best_url,
-    date: new Date().toISOString(),
-  })
-  localStorage.setItem('wzs_history', JSON.stringify(history.slice(0, 50)))
+  try {
+    const history = JSON.parse(localStorage.getItem('wzs_history') || '[]')
+    history.unshift({
+      id: Date.now(),
+      title: video.title,
+      thumbnail: video.thumbnail,
+      platform: video.platform,
+      url: video.best_url,
+      date: new Date().toISOString(),
+    })
+    localStorage.setItem('wzs_history', JSON.stringify(history.slice(0, 50)))
+  } catch { /* localStorage indisponible */ }
   notify({ message: 'Téléchargement lancé !', type: 'success' })
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 const safeFilename = (s) =>
   (s || 'video').replace(/[^\w\-. ]/g, '_').substring(0, 80)
 
@@ -506,23 +615,42 @@ const fmtSize = (b) => {
   letter-spacing: -1.5px;
   margin-bottom: 18px;
 }
-.hero__accent {
-  color: var(--mint);
-}
+.hero__accent { color: var(--mint); }
 
 .hero__sub {
   color: var(--text-md);
   font-size: 15.5px;
   max-width: 420px;
-  margin: 0 auto;
+  margin: 0 auto 24px;
   line-height: 1.65;
 }
 .hero__sub strong { color: var(--text-hi); }
 
+/* Feature badges */
+.hero__features {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+.feat-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-md);
+}
+.feat-badge svg { color: var(--mint); }
+
 /* ── Extractor ────────────────────────────────────────────────────────────── */
 .extractor { padding: 0 0 72px; }
 
-/* ── Platforms ────────────────────────────────────────────────────────────── */
+/* Platforms */
 .platforms {
   display: flex;
   flex-wrap: wrap;
@@ -546,7 +674,6 @@ const fmtSize = (b) => {
 .platform--active,
 .platform:hover { color: var(--text-hi); border-color: var(--border-md); }
 
-/* Per-platform active color */
 .platform--tiktok.platform--active    { border-color: var(--col-tiktok);    color: var(--col-tiktok); }
 .platform--youtube.platform--active   { border-color: var(--col-youtube);   color: var(--col-youtube); }
 .platform--pinterest.platform--active { border-color: var(--col-pinterest); color: var(--col-pinterest); }
@@ -556,16 +683,12 @@ const fmtSize = (b) => {
 .platform--twitter.platform--active   { border-color: var(--col-twitter);   color: var(--col-twitter); }
 
 .wm-chip {
-  font-size: 9px;
-  font-weight: 700;
-  background: var(--mint);
-  color: #000;
-  padding: 0px 5px;
-  border-radius: 4px;
-  letter-spacing: 0.4px;
+  font-size: 9px; font-weight: 700;
+  background: var(--mint); color: #000;
+  padding: 0px 5px; border-radius: 4px; letter-spacing: 0.4px;
 }
 
-/* ── Card (shadcn-like) ───────────────────────────────────────────────────── */
+/* Card */
 .card {
   background: var(--bg-1);
   border: 1px solid var(--border);
@@ -575,14 +698,9 @@ const fmtSize = (b) => {
 }
 .card:hover { border-color: var(--border-md); }
 
-/* ── Input Card ───────────────────────────────────────────────────────────── */
+/* Input card */
 .input-card { padding: 18px; }
-
-.input-row {
-  display: flex;
-  gap: 10px;
-  align-items: stretch;
-}
+.input-row { display: flex; gap: 10px; align-items: stretch; }
 
 .url-wrap {
   flex: 1;
@@ -603,36 +721,25 @@ const fmtSize = (b) => {
 .url-icon { color: var(--text-lo); flex-shrink: 0; }
 .url-inp {
   flex: 1;
-  background: none;
-  border: none;
-  outline: none;
+  background: none; border: none; outline: none;
   color: var(--text-hi);
   font-family: var(--font-mono);
-  font-size: 13px;
-  min-width: 0;
+  font-size: 13px; min-width: 0;
 }
 .url-inp::placeholder { color: var(--text-lo); }
 .url-clear {
-  background: none;
-  border: none;
-  color: var(--text-lo);
-  cursor: pointer;
-  padding: 2px;
-  border-radius: 4px;
-  display: flex;
-  transition: all 0.15s;
-  flex-shrink: 0;
+  background: none; border: none;
+  color: var(--text-lo); cursor: pointer;
+  padding: 2px; border-radius: 4px;
+  display: flex; transition: all 0.15s; flex-shrink: 0;
 }
 .url-clear:hover { background: var(--bg-2); color: var(--text-hi); }
 
 .extract-btn { border-radius: var(--r-md); padding: 11px 22px; flex-shrink: 0; }
 
 .input-hints {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 10px;
-  padding: 0 2px;
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 10px; padding: 0 2px;
 }
 .hint-btn {
   display: flex; align-items: center; gap: 5px;
@@ -644,8 +751,8 @@ const fmtSize = (b) => {
 .hint-btn:hover { color: var(--mint); }
 .hint-sep, .hint-txt { font-size: 12px; color: var(--text-lo); }
 
-/* ── Skeleton ─────────────────────────────────────────────────────────────── */
-.result-card--skeleton { margin-top: 14px; display: flex; gap: 0; }
+/* Skeleton */
+.result-card--skeleton { margin-top: 14px; display: flex; }
 .sk {
   background: linear-gradient(90deg, var(--bg-2) 25%, var(--bg-3) 50%, var(--bg-2) 75%);
   background-size: 200% 100%;
@@ -660,50 +767,36 @@ const fmtSize = (b) => {
 .sk--w45   { width: 45%; }
 .sk--btn   { height: 38px; border-radius: var(--r-md); margin-top: 4px; }
 
-/* ── Result Card ──────────────────────────────────────────────────────────── */
+/* Result card */
 .result-card { margin-top: 14px; display: flex; }
 
 .thumb-wrap {
   position: relative;
-  width: 140px;
-  min-height: 120px;
+  width: 140px; min-height: 120px;
   flex-shrink: 0;
   background: var(--bg-2);
 }
-.thumb-img {
-  width: 100%; height: 100%;
-  object-fit: cover;
-  display: block;
-}
+.thumb-img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .thumb-fallback {
-  width: 100%; height: 100%;
-  min-height: 120px;
+  width: 100%; height: 100%; min-height: 120px;
   display: flex; align-items: center; justify-content: center;
   color: var(--text-lo);
 }
 
 .duration-badge {
-  position: absolute;
-  bottom: 6px; right: 6px;
+  position: absolute; bottom: 6px; right: 6px;
   display: flex; align-items: center; gap: 4px;
-  background: rgba(0,0,0,0.72);
-  color: #fff;
-  font-size: 10px;
-  font-family: var(--font-mono);
-  padding: 2px 6px;
-  border-radius: 4px;
+  background: rgba(0,0,0,0.72); color: #fff;
+  font-size: 10px; font-family: var(--font-mono);
+  padding: 2px 6px; border-radius: 4px;
   backdrop-filter: blur(4px);
 }
 
 .plat-badge {
-  position: absolute;
-  top: 6px; left: 6px;
+  position: absolute; top: 6px; left: 6px;
   display: flex; align-items: center; gap: 4px;
-  padding: 3px 8px;
-  border-radius: 5px;
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: capitalize;
+  padding: 3px 8px; border-radius: 5px;
+  font-size: 10px; font-weight: 700; text-transform: capitalize;
   backdrop-filter: blur(6px);
 }
 .plat-badge--tiktok    { background: rgba(255,45,85,0.85);   color: #fff; }
@@ -715,18 +808,13 @@ const fmtSize = (b) => {
 .plat-badge--twitter   { background: rgba(29,161,242,0.85);  color: #fff; }
 
 .result-body {
-  flex: 1;
-  min-width: 0;
+  flex: 1; min-width: 0;
   padding: 16px 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  display: flex; flex-direction: column; gap: 10px;
 }
 .result-title {
   font-family: var(--font-display);
-  font-size: 15px;
-  font-weight: 700;
-  line-height: 1.35;
+  font-size: 15px; font-weight: 700; line-height: 1.35;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -738,25 +826,51 @@ const fmtSize = (b) => {
 }
 
 .result-stats { display: flex; align-items: center; gap: 12px; }
-.stat {
-  display: flex; align-items: center; gap: 4px;
-  font-size: 12px; color: var(--text-md);
-}
+.stat { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-md); }
 
 .nowm-callout {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
+  display: inline-flex; align-items: center; gap: 5px;
   padding: 4px 10px;
   background: rgba(27,255,164,0.08);
   border: 1px solid rgba(27,255,164,0.2);
   border-radius: var(--r-sm);
-  color: var(--mint);
-  font-size: 12px;
-  font-weight: 600;
+  color: var(--mint); font-size: 12px; font-weight: 600;
 }
 
-.dl-actions { display: flex; flex-direction: column; gap: 8px; }
+/* Download actions */
+.dl-actions { display: flex; flex-direction: column; gap: 7px; }
+
+.dl-secondary {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.dl-secondary__btn {
+  flex: 1;
+  min-width: 120px;
+}
+
+.dl-secondary__btn--disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* Strip info */
+.strip-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 10px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-size: 11px;
+  color: var(--text-lo);
+  line-height: 1.5;
+}
+.strip-info svg { color: var(--text-lo); flex-shrink: 0; margin-top: 1px; }
 
 /* Formats */
 .formats-section { border-top: 1px solid var(--border); padding-top: 10px; }
@@ -794,14 +908,25 @@ const fmtSize = (b) => {
 .fmt-ext { font-family: var(--font-mono); font-size: 11px; color: var(--text-md); }
 .fmt-sz  { font-size: 11px; color: var(--text-md); margin-left: auto; }
 .fmt-nowm { font-size: 9px; font-weight: 700; background: var(--mint); color: #000; padding: 1px 5px; border-radius: 3px; }
-.fmt-dl  { color: var(--text-lo); margin-left: 6px; }
+.fmt-strip {
+  display: flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.05);
+  color: var(--text-lo);
+  text-decoration: none;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.fmt-strip:hover { background: rgba(255,255,255,0.1); color: var(--text-hi); }
+.fmt-dl  { color: var(--text-lo); margin-left: 4px; }
 
 .fmt-drop-enter-active { transition: all 0.22s var(--ease); }
 .fmt-drop-leave-active { transition: all 0.15s var(--ease); }
 .fmt-drop-enter-from   { opacity: 0; transform: translateY(-4px); }
 .fmt-drop-leave-to     { opacity: 0; }
 
-/* ── Error Card ───────────────────────────────────────────────────────────── */
+/* Error */
 .error-card {
   margin-top: 14px;
   background: rgba(244,63,94,0.06);
@@ -816,13 +941,13 @@ const fmtSize = (b) => {
 .error-body p      { font-size: 13px; color: var(--text-md); }
 .error-card .wz-btn { flex-shrink: 0; }
 
-/* ── Result transitions ────────────────────────────────────────────────────── */
+/* Result transitions */
 .result-enter-active { transition: all 0.32s cubic-bezier(0.34, 1.4, 0.64, 1); }
 .result-leave-active { transition: all 0.2s var(--ease); }
 .result-enter-from   { opacity: 0; transform: translateY(10px) scale(0.98); }
 .result-leave-to     { opacity: 0; }
 
-/* ── How To ────────────────────────────────────────────────────────────────── */
+/* ── How To + Features ────────────────────────────────────────────────────── */
 .howto {
   padding: 56px 0 80px;
   border-top: 1px solid var(--border);
@@ -830,9 +955,7 @@ const fmtSize = (b) => {
 .howto__header { text-align: center; margin-bottom: 40px; }
 .howto__title {
   font-family: var(--font-display);
-  font-size: 26px;
-  font-weight: 700;
-  margin-bottom: 6px;
+  font-size: 26px; font-weight: 700; margin-bottom: 6px;
 }
 .howto__sub { color: var(--text-md); font-size: 14.5px; }
 
@@ -841,8 +964,8 @@ const fmtSize = (b) => {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 12px;
+  margin-bottom: 32px;
 }
-
 .step {
   background: var(--bg-1);
   border: 1px solid var(--border);
@@ -855,29 +978,43 @@ const fmtSize = (b) => {
   transform: translateY(-2px);
   background: var(--bg-2);
 }
-
-.step__num {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--mint);
-  margin-bottom: 10px;
-  opacity: 0.7;
-}
+.step__num { font-family: var(--font-mono); font-size: 10px; color: var(--mint); margin-bottom: 10px; opacity: 0.7; }
 .step__icon-wrap {
   width: 42px; height: 42px;
   background: var(--bg-2);
   border-radius: var(--r-md);
   display: flex; align-items: center; justify-content: center;
-  color: var(--mint);
-  margin-bottom: 12px;
+  color: var(--mint); margin-bottom: 12px;
 }
-.step__title {
-  font-family: var(--font-display);
-  font-size: 14px;
-  font-weight: 700;
-  margin-bottom: 5px;
+.step__title { font-family: var(--font-display); font-size: 14px; font-weight: 700; margin-bottom: 5px; }
+.step__desc  { font-size: 12.5px; color: var(--text-md); line-height: 1.55; }
+
+/* Feature cards */
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
 }
-.step__desc { font-size: 12.5px; color: var(--text-md); line-height: 1.55; }
+.feat-card {
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 18px;
+  transition: all 0.22s var(--ease);
+}
+.feat-card:hover {
+  border-color: var(--border-md);
+  transform: translateY(-2px);
+}
+.feat-card__icon {
+  width: 38px; height: 38px;
+  background: var(--mint-dim);
+  border-radius: var(--r-md);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--mint); margin-bottom: 12px;
+}
+.feat-card__title { font-family: var(--font-display); font-size: 13.5px; font-weight: 700; margin-bottom: 5px; }
+.feat-card__desc  { font-size: 12px; color: var(--text-md); line-height: 1.55; }
 
 /* ── Responsive ────────────────────────────────────────────────────────────── */
 @media (max-width: 520px) {
@@ -886,5 +1023,8 @@ const fmtSize = (b) => {
   .result-card  { flex-direction: column; }
   .thumb-wrap   { width: 100%; min-height: 180px; }
   .steps        { grid-template-columns: 1fr 1fr; }
+  .features-grid { grid-template-columns: 1fr 1fr; }
+  .dl-secondary { flex-direction: column; }
+  .dl-secondary__btn { flex: unset; width: 100%; }
 }
 </style>

@@ -13,39 +13,23 @@ class VideoController extends Controller
 {
     private string $extractorUrl;
 
-    private const CACHE_TTL      = 600;  // 10 min
+    private const CACHE_TTL       = 600;  // 10 min
     private const EXTRACT_TIMEOUT = 60;
     private const FAST_TIMEOUT    = 5;
 
-    /**
-     * Domaines autorisés pour le proxy.
-     * Clé = pattern de domaine, valeur = plateforme associée.
-     */
     private const ALLOWED_PROXY_DOMAINS = [
-        // TikTok — tous les CDN possibles
         'tiktokcdn.com', 'tiktokv.com', 'tiktokcdn-us.com',
         'tiktokcdn-eu.com', 'byteoversea.com', 'tiktok.com',
         'musical.ly', 'p16-sign.tiktokcdn-us.com',
-        // Pinterest
         'pinimg.com', 'pinterest.com',
-        // Facebook / Meta
         'fbcdn.net', 'facebook.com', 'fbsbx.com',
-        // Instagram
         'cdninstagram.com', 'instagram.com',
-        // YouTube (googlevideo sert les fichiers réels)
         'googlevideo.com', 'youtube.com', 'ytimg.com',
-        // LinkedIn
         'licdn.com', 'linkedin.com',
-        // Twitter / X
         'twimg.com', 'twitter.com', 'x.com',
-        // CDN génériques
         'akamaihd.net', 'cloudfront.net', 'akamai.net',
     ];
 
-    /**
-     * Headers de téléchargement par plateforme.
-     * Synchronisés avec Python DOWNLOAD_HEADERS.
-     */
     private const PLATFORM_DOWNLOAD_HEADERS = [
         'tiktok' => [
             'User-Agent' => 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.82 Mobile Safari/537.36',
@@ -100,7 +84,16 @@ class VideoController extends Controller
         } catch (\Exception) {
             $python = ['status' => 'unreachable'];
         }
-        return response()->json(['status' => 'ok', 'service' => 'waziscope-laravel', 'extractor' => $python]);
+
+        // Vérifier la disponibilité de ffmpeg
+        $ffmpegPath = $this->getFfmpegPath();
+
+        return response()->json([
+            'status'   => 'ok',
+            'service'  => 'waziscope-laravel',
+            'extractor' => $python,
+            'ffmpeg'   => $ffmpegPath ? ['available' => true, 'path' => $ffmpegPath] : ['available' => false],
+        ]);
     }
 
     // ─── Plateformes ───────────────────────────────────────────────────────────
@@ -167,9 +160,10 @@ class VideoController extends Controller
             }
 
             return response()->json([
-                'success'     => true,
-                'data'        => $this->normalizeVideoData($data['data']),
-                'duration_ms' => $data['duration_ms'] ?? null,
+                'success'      => true,
+                'data'         => $this->normalizeVideoData($data['data']),
+                'duration_ms'  => $data['duration_ms'] ?? null,
+                'ffmpeg_available' => (bool) $this->getFfmpegPath(),
             ]);
 
         } catch (\Exception $e) {
@@ -210,14 +204,6 @@ class VideoController extends Controller
     }
 
     // ─── Download proxy ────────────────────────────────────────────────────────
-    //
-    // FIX .mp4.json : le bug venait de fopen() PHP qui échouait sans les bons
-    // headers TikTok → Laravel renvoyait une réponse JSON d'erreur → le browser
-    // voyait Content-Type application/json mais le filename était .mp4
-    // → OS ajoutait .json → fichier .mp4.json
-    //
-    // Solution : utiliser cURL avec les headers corrects par plateforme.
-    // cURL est bien plus fiable que fopen() pour les CDN avec hotlink protection.
 
     public function download(Request $request): StreamedResponse|JsonResponse
     {
@@ -233,28 +219,209 @@ class VideoController extends Controller
             $request->input('filename', 'video_' . time() . '.mp4')
         );
 
-        // ── Vérification domaine ────────────────────────────────────────────
         if (!$this->isAllowedDomain($videoUrl)) {
-            Log::warning('WaziScope download: domaine non autorisé', ['url' => $videoUrl]);
             return response()->json(['success' => false, 'message' => 'Source non autorisée'], 403);
         }
 
-        // ── Vérifier que cURL est disponible ───────────────────────────────
         if (!function_exists('curl_init')) {
-            // Fallback fopen si cURL absent (rare)
             return $this->downloadWithFopen($videoUrl, $filename, $platform);
         }
 
         return $this->downloadWithCurl($videoUrl, $filename, $platform);
     }
 
+    // ─── Strip metadata ────────────────────────────────────────────────────────
+    //
+    // Télécharge la vidéo depuis le CDN, passe par ffmpeg pour supprimer
+    // TOUTES les métadonnées (titre, auteur, GPS, device info, description,
+    // copyright, dates EXIF, etc.) sans re-encoder (-c copy = ultra rapide).
+    //
+    // ffmpeg -i input.mp4 -map_metadata -1 -map_metadata:s:v -1
+    //        -map_metadata:s:a -1 -c copy output.mp4
+
+    public function stripMetadata(Request $request): StreamedResponse|JsonResponse
+    {
+        $request->validate([
+            'url'      => ['required', 'url'],
+            'filename' => ['nullable', 'string', 'max:255'],
+            'platform' => ['nullable', 'string', 'max:30'],
+        ]);
+
+        $videoUrl = $request->input('url');
+        $platform = $request->input('platform', $this->detectPlatformFromUrl($videoUrl));
+        $baseName = $this->sanitizeFilename(
+            $request->input('filename', 'video_' . time())
+        );
+        $filename = $baseName . '_clean.mp4';
+
+        // Sécurité domaine
+        if (!$this->isAllowedDomain($videoUrl)) {
+            Log::warning('WaziScope strip: domaine non autorisé', ['url' => $videoUrl]);
+            return response()->json(['success' => false, 'message' => 'Source non autorisée'], 403);
+        }
+
+        // Vérifier ffmpeg
+        $ffmpegBin = $this->getFfmpegPath();
+        if (!$ffmpegBin) {
+            return response()->json([
+                'success' => false,
+                'message' => 'ffmpeg n\'est pas installé sur ce serveur. Contactez l\'administrateur.',
+            ], 503);
+        }
+
+        if (!function_exists('curl_init')) {
+            return response()->json(['success' => false, 'message' => 'cURL requis'], 503);
+        }
+
+        $headers  = self::PLATFORM_DOWNLOAD_HEADERS[$platform] ?? self::PLATFORM_DOWNLOAD_HEADERS['tiktok'];
+        $tmpDir   = sys_get_temp_dir();
+        $uniqueId = uniqid('wzs_', true);
+        $tmpInput  = $tmpDir . DIRECTORY_SEPARATOR . $uniqueId . '_in.mp4';
+        $tmpOutput = $tmpDir . DIRECTORY_SEPARATOR . $uniqueId . '_out.mp4';
+
+        // ── Étape 1 : télécharger la vidéo dans un fichier temporaire ─────────
+        $dlSuccess = $this->curlDownloadToFile($videoUrl, $headers, $tmpInput);
+
+        if (!$dlSuccess || !file_exists($tmpInput) || filesize($tmpInput) === 0) {
+            @unlink($tmpInput);
+            Log::warning('WaziScope strip: download échoué', ['url' => substr($videoUrl, 0, 100)]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Impossible de télécharger la vidéo. L\'URL a peut-être expiré.',
+            ], 410);
+        }
+
+        // ── Étape 2 : suppression des métadonnées via ffmpeg ──────────────────
+        $cmd = sprintf(
+            '%s -y -i %s -map_metadata -1 -map_metadata:s:v -1 -map_metadata:s:a -1 -c copy %s 2>/dev/null',
+            escapeshellarg($ffmpegBin),
+            escapeshellarg($tmpInput),
+            escapeshellarg($tmpOutput)
+        );
+
+        exec($cmd, $ffOutput, $ffCode);
+
+        @unlink($tmpInput); // Nettoyer l'input dès que possible
+
+        if ($ffCode !== 0 || !file_exists($tmpOutput) || filesize($tmpOutput) === 0) {
+            @unlink($tmpOutput);
+            Log::error('WaziScope strip: ffmpeg failed', ['code' => $ffCode]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Erreur lors de la suppression des métadonnées.',
+            ], 500);
+        }
+
+        $fileSize = filesize($tmpOutput);
+        Log::info("WaziScope strip: OK [{$platform}] {$fileSize} bytes → {$filename}");
+
+        // ── Étape 3 : streamer le fichier propre, puis nettoyer ───────────────
+        return response()->streamDownload(
+            function () use ($tmpOutput) {
+                $f = @fopen($tmpOutput, 'rb');
+                if ($f) {
+                    try {
+                        while (!feof($f)) {
+                            $chunk = fread($f, 65536);
+                            if ($chunk === false) break;
+                            echo $chunk;
+                            if (ob_get_level() > 0) ob_flush();
+                            flush();
+                        }
+                    } finally {
+                        fclose($f);
+                        @unlink($tmpOutput);
+                    }
+                }
+            },
+            $filename,
+            [
+                'Content-Type'        => 'video/mp4',
+                'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+                'Content-Length'      => (string) $fileSize,
+                'Cache-Control'       => 'no-cache, no-store, must-revalidate',
+                'X-Accel-Buffering'   => 'no',
+                'X-Metadata-Stripped' => 'true',
+            ]
+        );
+    }
+
+    // ─── Check ffmpeg capability (API endpoint) ────────────────────────────────
+
+    public function checkCapabilities(): JsonResponse
+    {
+        return response()->json([
+            'ffmpeg' => (bool) $this->getFfmpegPath(),
+        ]);
+    }
+
+    // ─── Private helpers ────────────────────────────────────────────────────────
+
     /**
-     * Download via cURL — plus fiable, supporte tous les headers custom.
-     * Corrige le bug .mp4.json.
+     * Retourne le chemin de ffmpeg ou null s'il n'est pas disponible.
+     */
+    private function getFfmpegPath(): ?string
+    {
+        // Priorité : config > PATH auto-détecté
+        $configured = config('services.waziscope.ffmpeg_path');
+        if ($configured && file_exists($configured) && is_executable($configured)) {
+            return $configured;
+        }
+
+        // Auto-détection (Linux/Mac)
+        foreach (['/usr/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/opt/homebrew/bin/ffmpeg'] as $path) {
+            if (file_exists($path) && is_executable($path)) {
+                return $path;
+            }
+        }
+
+        // Fallback which
+        $which = trim(shell_exec('which ffmpeg 2>/dev/null') ?? '');
+        return $which ?: null;
+    }
+
+    /**
+     * Télécharge une URL dans un fichier local avec cURL.
+     * Retourne true si le téléchargement a réussi.
+     */
+    private function curlDownloadToFile(string $url, array $headers, string $destPath): bool
+    {
+        $fp = @fopen($destPath, 'wb');
+        if (!$fp) return false;
+
+        $ch = curl_init();
+        curl_setopt_array($ch, [
+            CURLOPT_URL            => $url,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS      => 5,
+            CURLOPT_TIMEOUT        => 180,     // 3 min max pour gros fichiers
+            CURLOPT_CONNECTTIMEOUT => 15,
+            CURLOPT_HTTPHEADER     => $this->formatCurlHeaders($headers),
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_ENCODING       => '',
+            CURLOPT_FILE           => $fp,
+            CURLOPT_HEADER         => false,
+        ]);
+
+        curl_exec($ch);
+        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $error    = curl_error($ch);
+        curl_close($ch);
+        fclose($fp);
+
+        if ($error) {
+            Log::warning('WaziScope curlDownloadToFile error', ['error' => $error]);
+            return false;
+        }
+
+        return $httpCode >= 200 && $httpCode < 400;
+    }
+
+    /**
+     * Download via cURL — streaming direct vers le navigateur.
      */
     private function downloadWithCurl(string $videoUrl, string $filename, string $platform): StreamedResponse|JsonResponse
     {
-        // Déterminer le Content-Type
         $ext         = strtolower(pathinfo(parse_url($videoUrl, PHP_URL_PATH) ?? '', PATHINFO_EXTENSION));
         $contentType = match ($ext) {
             'webm'  => 'video/webm',
@@ -263,19 +430,13 @@ class VideoController extends Controller
             default => 'video/mp4',
         };
 
-        // Headers spécifiques à la plateforme
-        $headers = self::PLATFORM_DOWNLOAD_HEADERS[$platform] ?? self::PLATFORM_DOWNLOAD_HEADERS['tiktok'];
-
-        // Vérifier d'abord que l'URL est accessible (HEAD request)
+        $headers     = self::PLATFORM_DOWNLOAD_HEADERS[$platform] ?? self::PLATFORM_DOWNLOAD_HEADERS['tiktok'];
         $checkResult = $this->curlHead($videoUrl, $headers);
+
         if ($checkResult['http_code'] >= 400 && $checkResult['http_code'] !== 0) {
-            Log::warning('WaziScope download: URL inaccessible', [
-                'url'  => substr($videoUrl, 0, 100),
-                'code' => $checkResult['http_code'],
-            ]);
             return response()->json([
                 'success' => false,
-                'message' => "L'URL vidéo a expiré ou n'est plus accessible (code {$checkResult['http_code']}). Veuillez extraire à nouveau.",
+                'message' => "L'URL vidéo a expiré (code {$checkResult['http_code']}). Veuillez extraire à nouveau.",
             ], 410);
         }
 
@@ -290,29 +451,21 @@ class VideoController extends Controller
                     CURLOPT_CONNECTTIMEOUT => 15,
                     CURLOPT_HTTPHEADER     => $this->formatCurlHeaders($headers),
                     CURLOPT_SSL_VERIFYPEER => true,
-                    CURLOPT_ENCODING       => '',  // Accepter toutes les encodages
-                    CURLOPT_BUFFERSIZE     => 65536, // 64KB chunks
-                    // Écrire directement dans le buffer de sortie
+                    CURLOPT_ENCODING       => '',
+                    CURLOPT_BUFFERSIZE     => 65536,
                     CURLOPT_WRITEFUNCTION  => function ($ch, $data) {
                         echo $data;
                         if (ob_get_level() > 0) ob_flush();
                         flush();
                         return strlen($data);
                     },
-                    // Pas de header dans la sortie
                     CURLOPT_HEADER         => false,
                     CURLOPT_RETURNTRANSFER => false,
                 ]);
-
                 curl_exec($ch);
-
-                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-                $error    = curl_error($ch);
+                $error = curl_error($ch);
                 curl_close($ch);
-
-                if ($error) {
-                    Log::error('WaziScope cURL stream error', ['error' => $error]);
-                }
+                if ($error) Log::error('WaziScope cURL stream error', ['error' => $error]);
             },
             $filename,
             [
@@ -330,12 +483,8 @@ class VideoController extends Controller
      */
     private function downloadWithFopen(string $videoUrl, string $filename, string $platform): StreamedResponse
     {
-        $headers = self::PLATFORM_DOWNLOAD_HEADERS[$platform] ?? [];
-        $httpHeaders = array_map(
-            fn($k, $v) => "$k: $v",
-            array_keys($headers),
-            array_values($headers)
-        );
+        $headers     = self::PLATFORM_DOWNLOAD_HEADERS[$platform] ?? [];
+        $httpHeaders = array_map(fn($k, $v) => "$k: $v", array_keys($headers), array_values($headers));
         $httpHeaders[] = 'Range: bytes=0-';
 
         return response()->streamDownload(function () use ($videoUrl, $httpHeaders) {
@@ -349,7 +498,6 @@ class VideoController extends Controller
                 ],
                 'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
             ]);
-
             $stream = @fopen($videoUrl, 'r', false, $context);
             if ($stream) {
                 try {
@@ -365,18 +513,13 @@ class VideoController extends Controller
                 }
             }
         }, $filename, [
-            'Content-Type'      => 'video/mp4',
+            'Content-Type'        => 'video/mp4',
             'Content-Disposition' => 'attachment; filename="' . $filename . '"',
-            'Cache-Control'     => 'no-cache',
-            'X-Accel-Buffering' => 'no',
+            'Cache-Control'       => 'no-cache',
+            'X-Accel-Buffering'   => 'no',
         ]);
     }
 
-    // ─── Private helpers ────────────────────────────────────────────────────────
-
-    /**
-     * Fait une requête HEAD cURL pour vérifier l'accessibilité de l'URL.
-     */
     private function curlHead(string $url, array $headers): array
     {
         $ch = curl_init();
@@ -391,45 +534,29 @@ class VideoController extends Controller
             CURLOPT_SSL_VERIFYPEER => true,
         ]);
         curl_exec($ch);
-        $result = [
-            'http_code' => (int) curl_getinfo($ch, CURLINFO_HTTP_CODE),
-            'error'     => curl_error($ch),
-        ];
+        $result = ['http_code' => (int) curl_getinfo($ch, CURLINFO_HTTP_CODE), 'error' => curl_error($ch)];
         curl_close($ch);
         return $result;
     }
 
-    /**
-     * Convertit un array associatif d'headers en array cURL.
-     */
     private function formatCurlHeaders(array $headers): array
     {
-        return array_map(
-            fn($k, $v) => "$k: $v",
-            array_keys($headers),
-            array_values($headers)
-        );
+        return array_map(fn($k, $v) => "$k: $v", array_keys($headers), array_values($headers));
     }
 
-    /**
-     * Détecte la plateforme depuis l'URL pour choisir les bons headers.
-     */
     private function detectPlatformFromUrl(string $url): string
     {
         $url = strtolower($url);
-        if (str_contains($url, 'tiktok'))              return 'tiktok';
-        if (str_contains($url, 'youtu'))               return 'youtube';
-        if (str_contains($url, 'pinterest') || str_contains($url, 'pinimg')) return 'pinterest';
-        if (str_contains($url, 'facebook') || str_contains($url, 'fbcdn'))   return 'facebook';
+        if (str_contains($url, 'tiktok'))                                          return 'tiktok';
+        if (str_contains($url, 'youtu'))                                           return 'youtube';
+        if (str_contains($url, 'pinterest') || str_contains($url, 'pinimg'))       return 'pinterest';
+        if (str_contains($url, 'facebook') || str_contains($url, 'fbcdn'))         return 'facebook';
         if (str_contains($url, 'instagram') || str_contains($url, 'cdninstagram')) return 'instagram';
-        if (str_contains($url, 'linkedin') || str_contains($url, 'licdn'))   return 'linkedin';
-        if (str_contains($url, 'twitter') || str_contains($url, 'twimg'))    return 'twitter';
-        return 'tiktok'; // défaut le plus strict
+        if (str_contains($url, 'linkedin') || str_contains($url, 'licdn'))         return 'linkedin';
+        if (str_contains($url, 'twitter') || str_contains($url, 'twimg'))          return 'twitter';
+        return 'tiktok';
     }
 
-    /**
-     * Normalise les données VideoInfo depuis Python v2.
-     */
     private function normalizeVideoData(array $data): array
     {
         $platform = $data['platform'] ?? 'unknown';
@@ -450,26 +577,27 @@ class VideoController extends Controller
             'audio_only_url'     => $data['audio_only_url']   ?? null,
             'required_headers'   => $data['required_headers'] ?? [],
             'formats'            => $this->normalizeFormats($data['formats'] ?? [], $platform),
-            // URL proxy pré-calculée avec platform param pour les bons headers
             'proxy_download_url' => $this->buildProxyUrl($bestUrl, $data['title'] ?? 'video', $platform),
+            'proxy_strip_url'    => $this->buildStripUrl($bestUrl, $data['title'] ?? 'video', $platform),
         ];
     }
 
     private function normalizeFormats(array $formats, string $platform): array
     {
         return array_map(fn($fmt) => [
-            'format_id'    => $fmt['format_id']    ?? 'unknown',
-            'ext'          => $fmt['ext']           ?? 'mp4',
-            'quality'      => $fmt['quality']       ?? '?',
-            'url'          => $fmt['url']           ?? '',
-            'filesize'     => $fmt['filesize']      ?? null,
-            'width'        => $fmt['width']         ?? null,
-            'height'       => $fmt['height']        ?? null,
-            'fps'          => $fmt['fps']           ?? null,
-            'vcodec'       => $fmt['vcodec']        ?? null,
-            'acodec'       => $fmt['acodec']        ?? null,
-            'no_watermark' => $fmt['no_watermark']  ?? false,
+            'format_id'    => $fmt['format_id']   ?? 'unknown',
+            'ext'          => $fmt['ext']          ?? 'mp4',
+            'quality'      => $fmt['quality']      ?? '?',
+            'url'          => $fmt['url']          ?? '',
+            'filesize'     => $fmt['filesize']     ?? null,
+            'width'        => $fmt['width']        ?? null,
+            'height'       => $fmt['height']       ?? null,
+            'fps'          => $fmt['fps']          ?? null,
+            'vcodec'       => $fmt['vcodec']       ?? null,
+            'acodec'       => $fmt['acodec']       ?? null,
+            'no_watermark' => $fmt['no_watermark'] ?? false,
             'proxy_url'    => $this->buildProxyUrl($fmt['url'] ?? '', '', $platform),
+            'strip_url'    => $this->buildStripUrl($fmt['url'] ?? '', '', $platform),
         ], $formats);
     }
 
@@ -479,6 +607,16 @@ class VideoController extends Controller
         return url('/api/v1/download') . '?' . http_build_query([
             'url'      => $videoUrl,
             'filename' => $this->sanitizeFilename($title ?: 'video') . '.mp4',
+            'platform' => $platform,
+        ]);
+    }
+
+    private function buildStripUrl(string $videoUrl, string $title, string $platform = ''): string
+    {
+        if (!$videoUrl) return '';
+        return url('/api/v1/strip') . '?' . http_build_query([
+            'url'      => $videoUrl,
+            'filename' => $this->sanitizeFilename($title ?: 'video'),
             'platform' => $platform,
         ]);
     }
