@@ -329,6 +329,13 @@ def get_ydl_opts(platform: str, quality: str = "best") -> dict:
                 **base["http_headers"],
                 "Referer": "https://www.youtube.com/",
             },
+            # Contourne le blocage PO-token / "Sign in" sans cookies
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["tv_embedded", "web_embedded", "android", "web"],
+                    "player_skip": ["webpage", "configs"],
+                }
+            },
         })
 
     elif platform == "pinterest":
@@ -1323,6 +1330,12 @@ async def extract_playlist_info(url: str, limit: int = 20) -> PlaylistResponse:
         "extract_flat": True,
         "socket_timeout": 30,
         "playlistend": limit,
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["tv_embedded", "web_embedded", "android", "web"],
+                "player_skip": ["webpage", "configs"],
+            }
+        },
     }
 
     def _get_flat():
