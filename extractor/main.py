@@ -644,12 +644,17 @@ async def _extract_facebook(url: str) -> VideoInfo:
 # ─── Pinterest scraper ────────────────────────────────────────────────────────
 
 def _resolve_pin_it(url: str) -> str:
-    if "pin.it" not in url:
-        return url
-    resolved = _resolve_redirect(url, UA_MOBILE)
-    if resolved != url:
+    """Résout pin.it et nettoie l'URL finale (supprime /sent/, invite_code, etc.)."""
+    if "pin.it" in url:
+        resolved = _resolve_redirect(url, UA_MOBILE)
         logger.info(f"pin.it resolved: {url} → {resolved[:80]}")
-    return resolved
+        url = resolved
+
+    # Normalise : extrait juste /pin/<id>/ sans le reste
+    m = re.search(r'(https?://(?:www\.)?pinterest\.com/pin/\d+)', url)
+    if m:
+        return m.group(1) + "/"
+    return url
 
 
 def _pinterest_scrape(url: str) -> Optional[VideoInfo]:
@@ -693,17 +698,26 @@ def _pinterest_scrape(url: str) -> Optional[VideoInfo]:
         except Exception as e:
             logger.debug(f"Redux parse error: {e}")
 
+    # Fallback : regex directe sur les URLs pinimg.com/v.pinimg.com
     video_urls = re.findall(
-        r'"(?:url|V_720P|V_1080P|V_480P|V_240P)"\s*:\s*"(https://[^"]+(?:\.mp4|\.m3u8)[^"]*)"',
+        r'"(?:url|V_1080P|V_720P|V_480P|V_240P)"\s*:\s*"(https://[^"]+(?:\.mp4|\.m3u8)[^"]*)"',
         html
     )
-    if video_urls:
-        best_url = video_urls[-1]
-        title_match = re.search(r'"title"\s*:\s*"([^"]{3,200})"', html)
-        title = title_match.group(1) if title_match else "Vidéo Pinterest"
+    # Aussi chercher toute URL pinimg vidéo
+    pinimg_urls = re.findall(
+        r'(https://v(?:\d+)?\.pinimg\.com/videos/[^"\'>\s]+\.mp4[^"\'>\s]*)',
+        html
+    )
+    all_video_urls = video_urls + pinimg_urls
+    if all_video_urls:
+        best_url = all_video_urls[-1]
+        title = _extract_pinterest_title(html) or "Vidéo Pinterest"
+        thumb_m = re.search(r'property="og:image"\s+content="([^"]+)"', html)
+        thumbnail = thumb_m.group(1) if thumb_m else None
         return VideoInfo(
-            original_url=url,
+            original_url=resolved_url,
             title=title,
+            thumbnail=thumbnail,
             platform="pinterest",
             formats=[FormatInfo(format_id="0", ext="mp4", quality="best", url=best_url)],
             best_url=best_url,
@@ -711,6 +725,24 @@ def _pinterest_scrape(url: str) -> Optional[VideoInfo]:
             required_headers=DOWNLOAD_HEADERS["pinterest"],
         )
 
+    return None
+
+
+def _extract_pinterest_title(html: str) -> Optional[str]:
+    """Extrait le titre d'une page Pinterest — ignore les titres parasites courts."""
+    patterns = [
+        r'property="og:title"\s+content="([^"]{4,200})"',
+        r'"seo_title"\s*:\s*"([^"]{4,200})"',
+        r'"title"\s*:\s*"([^"]{4,200})"(?!\s*:)',  # exclut les clés imbriquées
+        r'<title[^>]*>([^<]{4,200})</title>',
+    ]
+    stopwords = {"pinterest", "pin", ".", "", "video", "vidéo"}
+    for p in patterns:
+        for m in re.finditer(p, html, re.IGNORECASE):
+            t = m.group(1).strip()
+            t = re.sub(r'\s*[|\-–]\s*Pinterest.*$', '', t, flags=re.IGNORECASE).strip()
+            if t and t.lower() not in stopwords and len(t) > 3:
+                return t
     return None
 
 
@@ -814,9 +846,12 @@ async def _extract_pinterest(url: str) -> VideoInfo:
     if info:
         formats, best_url, no_watermark_url, audio_only_url = _parse_formats(info, "pinterest")
         if best_url:
+            raw_title = info.get("title") or ""
+            # yt-dlp retourne parfois "." ou un titre vide — on ignore
+            good_title = raw_title.strip() if len(raw_title.strip()) > 3 else None
             return VideoInfo(
                 original_url=url,
-                title=info.get("title") or "Vidéo Pinterest",
+                title=good_title or "Vidéo Pinterest",
                 description=info.get("description"),
                 author=info.get("uploader"),
                 thumbnail=info.get("thumbnail"),
@@ -824,7 +859,7 @@ async def _extract_pinterest(url: str) -> VideoInfo:
                 platform="pinterest",
                 formats=formats,
                 best_url=best_url,
-                no_watermark_url=no_watermark_url,
+                no_watermark_url=no_watermark_url or best_url,
                 audio_only_url=audio_only_url,
                 required_headers=DOWNLOAD_HEADERS["pinterest"],
             )
@@ -899,7 +934,7 @@ def _parse_formats(
     video_fmts = [f for f in formats if f.vcodec and f.vcodec not in ("none", "")]
     best_url   = video_fmts[-1].url if video_fmts else (formats[-1].url if formats else None)
 
-    if platform == "tiktok" and not no_watermark_url and best_url:
+    if not no_watermark_url and best_url:
         no_watermark_url = best_url
 
     if not formats and "url" in info:
@@ -1073,6 +1108,217 @@ def _tikwm_extract(url: str) -> Optional[VideoInfo]:
     )
 
 
+# ─── Dailymotion : API metadata (pas d'impersonation) ────────────────────────
+
+def _dailymotion_api(url: str) -> Optional[VideoInfo]:
+    """Utilise l'API metadata Dailymotion — ne nécessite pas d'impersonation navigateur."""
+    m = re.search(r'dailymotion\.com/(?:video|embed/video)/([a-zA-Z0-9]+)', url)
+    if not m:
+        m = re.search(r'dai\.ly/([a-zA-Z0-9]+)', url)
+    if not m:
+        return None
+    vid_id = m.group(1)
+
+    api_url = (
+        f"https://www.dailymotion.com/player/metadata/video/{vid_id}"
+        "?embedder=https://www.dailymotion.com&locale=fr_FR&dmV1st=&dmTs=0&is_native_app=0"
+    )
+    headers = {
+        "User-Agent": UA_DESKTOP,
+        "Referer": "https://www.dailymotion.com/",
+        "Accept": "application/json, text/plain, */*",
+        "Origin": "https://www.dailymotion.com",
+    }
+    try:
+        html = _http_get_html(api_url, headers)
+        if not html:
+            return None
+        data = json.loads(html)
+    except Exception as e:
+        logger.debug(f"Dailymotion API parse error: {e}")
+        return None
+
+    qualities = data.get("qualities", {})
+    fmts: list[FormatInfo] = []
+    best_url = None
+
+    for q_name in ["1080", "720", "480", "380", "240", "auto"]:
+        streams = qualities.get(q_name, [])
+        for s in (streams if isinstance(streams, list) else []):
+            stream_url = s.get("url")
+            if stream_url and "m3u8" not in stream_url:
+                fmts.append(FormatInfo(
+                    format_id=q_name, ext="mp4", quality=f"{q_name}p",
+                    url=stream_url, no_watermark=False,
+                ))
+                if not best_url:
+                    best_url = stream_url
+
+    # Fallback HLS si pas de MP4
+    if not best_url:
+        for q_name in ["auto", "1080", "720"]:
+            for s in (qualities.get(q_name) or []):
+                u = s.get("url", "")
+                if u:
+                    fmts.append(FormatInfo(format_id=q_name, ext="m3u8", quality=q_name, url=u))
+                    best_url = best_url or u
+                    break
+
+    if not best_url:
+        return None
+
+    title     = data.get("title") or "Vidéo Dailymotion"
+    thumbnail = data.get("poster_url") or (data.get("thumbnails") or {}).get("x240")
+    duration  = data.get("duration")
+
+    return VideoInfo(
+        original_url=url,
+        title=title[:200],
+        thumbnail=thumbnail,
+        duration=duration,
+        platform="dailymotion",
+        formats=fmts if fmts else [FormatInfo(format_id="0", ext="mp4", quality="best", url=best_url)],
+        best_url=best_url,
+        no_watermark_url=best_url,
+        required_headers=DOWNLOAD_HEADERS.get("dailymotion", {}),
+    )
+
+
+async def _extract_dailymotion(url: str) -> VideoInfo:
+    loop = asyncio.get_event_loop()
+    # Essai yt-dlp sans impersonation
+    opts = {**get_ydl_opts("dailymotion"), "impersonate": None, "nocheckcertificate": True}
+    def _try():
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            return ydl.extract_info(url, download=False)
+    try:
+        info = await loop.run_in_executor(executor, _try)
+        if info:
+            formats, best_url, no_wm_url, audio_url = _parse_formats(info, "dailymotion")
+            if best_url:
+                return VideoInfo(
+                    original_url=url, title=info.get("title") or "Vidéo Dailymotion",
+                    author=info.get("uploader"), thumbnail=info.get("thumbnail"),
+                    duration=info.get("duration"), view_count=info.get("view_count"),
+                    platform="dailymotion", formats=formats,
+                    best_url=best_url, no_watermark_url=no_wm_url or best_url,
+                    audio_only_url=audio_url,
+                    required_headers=DOWNLOAD_HEADERS.get("dailymotion", {}),
+                )
+    except Exception as e:
+        logger.debug(f"Dailymotion yt-dlp failed: {e}")
+
+    logger.info("Dailymotion: yt-dlp failed, fallback API metadata...")
+    result = await loop.run_in_executor(executor, _dailymotion_api, url)
+    if result:
+        return result
+    raise ValueError("Impossible d'extraire cette vidéo Dailymotion.")
+
+
+# ─── Reddit : JSON API sans authentification ──────────────────────────────────
+
+def _reddit_json(url: str) -> Optional[VideoInfo]:
+    """Extrait une vidéo Reddit via leur API JSON publique."""
+    # Nettoyer l'URL
+    clean = re.sub(r'\?.*$', '', url.rstrip('/'))
+    if not clean.endswith('.json'):
+        clean += '.json'
+    api_url = clean + '?raw_json=1&limit=1'
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; WaziScope/3.0; +https://waziscope.nealix.org)",
+        "Accept": "application/json",
+    }
+    try:
+        html = _http_get_html(api_url, headers)
+        if not html:
+            return None
+        data = json.loads(html)
+    except Exception as e:
+        logger.debug(f"Reddit JSON parse error: {e}")
+        return None
+
+    try:
+        post = data[0]["data"]["children"][0]["data"]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+    # Vidéo Reddit native (v.redd.it)
+    media = post.get("media") or post.get("secure_media") or {}
+    reddit_video = media.get("reddit_video") or {}
+    video_url = reddit_video.get("fallback_url") or reddit_video.get("hls_url")
+
+    if not video_url:
+        # Crossposts
+        cp = post.get("crosspost_parent_list") or []
+        for cp_post in cp:
+            cp_media = cp_post.get("media") or {}
+            cp_video = cp_media.get("reddit_video") or {}
+            video_url = cp_video.get("fallback_url")
+            if video_url:
+                break
+
+    if not video_url:
+        return None
+
+    # Nettoyer les params de tracking
+    video_url = re.sub(r'\?.*$', '', video_url)
+
+    title     = post.get("title") or "Vidéo Reddit"
+    thumbnail = post.get("thumbnail")
+    if thumbnail in ("self", "default", "nsfw", "spoiler", ""):
+        thumbnail = None
+    duration  = reddit_video.get("duration")
+    author    = post.get("author")
+
+    fmt = FormatInfo(format_id="0", ext="mp4", quality="best", url=video_url)
+    return VideoInfo(
+        original_url=url, title=title[:200], author=author,
+        thumbnail=thumbnail, duration=duration,
+        platform="reddit",
+        formats=[fmt], best_url=video_url, no_watermark_url=video_url,
+        required_headers={
+            "User-Agent": UA_DESKTOP,
+            "Referer": "https://www.reddit.com/",
+        },
+    )
+
+
+async def _extract_reddit(url: str) -> VideoInfo:
+    loop = asyncio.get_event_loop()
+
+    # Essai yt-dlp d'abord
+    opts = get_ydl_opts("reddit")
+    def _try():
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            return ydl.extract_info(url, download=False)
+    try:
+        info = await loop.run_in_executor(executor, _try)
+        if info:
+            formats, best_url, no_wm_url, audio_url = _parse_formats(info, "reddit")
+            if best_url:
+                return VideoInfo(
+                    original_url=url, title=info.get("title") or "Vidéo Reddit",
+                    author=info.get("uploader"), thumbnail=info.get("thumbnail"),
+                    duration=info.get("duration"), view_count=info.get("view_count"),
+                    platform="reddit", formats=formats,
+                    best_url=best_url, no_watermark_url=no_wm_url or best_url,
+                    audio_only_url=audio_url,
+                    required_headers=DOWNLOAD_HEADERS.get("reddit", {}),
+                )
+    except Exception as e:
+        logger.debug(f"Reddit yt-dlp failed: {e}")
+
+    logger.info("Reddit: yt-dlp failed, fallback JSON API...")
+    result = await loop.run_in_executor(executor, _reddit_json, url)
+    if result:
+        return result
+    raise ValueError(
+        "Impossible d'extraire cette vidéo Reddit. "
+        "Vérifiez que le post est public et contient une vidéo native."
+    )
+
+
 # ─── Extraction principale ────────────────────────────────────────────────────
 
 async def extract_video_info(url: str, quality: str = "best") -> VideoInfo:
@@ -1093,6 +1339,12 @@ async def extract_video_info(url: str, quality: str = "best") -> VideoInfo:
     if platform == "facebook":
         return await _extract_facebook(url)
 
+    if platform == "dailymotion":
+        return await _extract_dailymotion(url)
+
+    if platform == "reddit":
+        return await _extract_reddit(url)
+
     ydl_opts = get_ydl_opts(platform, quality)
     loop     = asyncio.get_event_loop()
 
@@ -1108,7 +1360,11 @@ async def extract_video_info(url: str, quality: str = "best") -> VideoInfo:
             raise ValueError("Cette vidéo est privée.")
         if "not available" in msg:
             raise ValueError("Cette vidéo n'est pas disponible dans votre région.")
-        if "Sign in" in msg or "login" in msg.lower():
+        if "Sign in" in msg or "login" in msg.lower() or "authentication" in msg.lower() or "Account authentication" in msg:
+            if platform == "instagram":
+                raise ValueError("Instagram requiert une connexion — seuls les profils publics sans restriction sont supportés.")
+            if platform in ("twitter", "x"):
+                raise ValueError("Twitter/X requiert une authentification API. Essayez avec une URL de tweet public avec vidéo.")
             raise ValueError("Cette vidéo nécessite une connexion.")
         if "removed" in msg.lower() or "deleted" in msg.lower():
             raise ValueError("Cette vidéo a été supprimée.")
