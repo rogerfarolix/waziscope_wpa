@@ -312,16 +312,16 @@ def get_ydl_opts(platform: str, quality: str = "best") -> dict:
             "format": "bestvideo+bestaudio/best",
             "extractor_args": {
                 "tiktok": {
-                    "webpage_download": ["1"],
-                    "api_hostname": ["api22-normal-c-useast2a.tiktokv.com"],
-                    "app_name": ["trill"],
-                    "app_version": ["34.1.2"],
-                    "manifest_app_version": ["341"],
+                    "webpage_download": ["0"],
+                    "api_hostname": ["api16-normal-c-alisg.tiktokv.com"],
+                    "app_name": ["tiktok"],
+                    "app_version": ["35.1.2"],
+                    "manifest_app_version": ["351"],
                 }
             },
             "http_headers": {
                 **base["http_headers"],
-                "User-Agent": UA_MOBILE,
+                "User-Agent": UA_ANDROID,
                 "Referer": "https://www.tiktok.com/",
             },
         })
@@ -911,6 +911,93 @@ def _parse_formats(
     return formats, best_url, no_watermark_url, audio_only_url
 
 
+# ─── TikTok : retry multi-région ─────────────────────────────────────────────
+
+# Endpoints classés par proximité : Singapore/EU d'abord, US en fallback
+_TIKTOK_API_HOSTS = [
+    ("api16-normal-c-alisg.tiktokv.com",  "tiktok",   "35.1.2",  "351"),
+    ("api19-normal-c-alisg.tiktokv.com",  "tiktok",   "35.1.2",  "351"),
+    ("api21-normal-c-alisg.tiktokv.com",  "tiktok",   "35.1.2",  "351"),
+    ("api31-normal-c-alisg.tiktokv.com",  "trill",    "34.1.2",  "341"),
+    ("api16-normal-c-useast1a.tiktokv.com","trill",   "34.1.2",  "341"),
+    ("api22-normal-c-useast2a.tiktokv.com","trill",   "34.1.2",  "341"),
+    ("api19-normal-c-useast2a.tiktokv.com","tiktok",  "35.1.2",  "351"),
+    ("api16-normal-c-maliva.tiktokv.com",  "tiktok",  "35.1.2",  "351"),
+]
+
+
+def _make_tiktok_opts(hostname: str, app_name: str, app_version: str, manifest: str) -> dict:
+    return {
+        "quiet": True,
+        "no_warnings": True,
+        "extract_flat": False,
+        "socket_timeout": 20,
+        "retries": 2,
+        "fragment_retries": 2,
+        "nocheckcertificate": True,
+        "format": "bestvideo+bestaudio/best",
+        "extractor_args": {
+            "tiktok": {
+                "webpage_download": ["0"],
+                "api_hostname": [hostname],
+                "app_name": [app_name],
+                "app_version": [app_version],
+                "manifest_app_version": [manifest],
+            }
+        },
+        "http_headers": {
+            "User-Agent": UA_ANDROID,
+            "Referer": "https://www.tiktok.com/",
+            "Accept": "application/json",
+            "Accept-Language": "en-US,en;q=0.9",
+        },
+    }
+
+
+async def _extract_tiktok(url: str) -> VideoInfo:
+    loop = asyncio.get_event_loop()
+    last_err = "Échec TikTok"
+
+    for hostname, app_name, app_version, manifest in _TIKTOK_API_HOSTS:
+        opts = _make_tiktok_opts(hostname, app_name, app_version, manifest)
+
+        def _try(o=opts):
+            with yt_dlp.YoutubeDL(o) as ydl:
+                return ydl.extract_info(url, download=False)
+
+        try:
+            info = await loop.run_in_executor(executor, _try)
+            if not info:
+                continue
+
+            formats, best_url, no_watermark_url, audio_only_url = _parse_formats(info, "tiktok")
+            logger.info(f"TikTok OK via {hostname}")
+            return VideoInfo(
+                original_url=url,
+                title=info.get("title") or "Vidéo TikTok",
+                author=info.get("uploader") or info.get("creator"),
+                thumbnail=info.get("thumbnail"),
+                duration=info.get("duration"),
+                view_count=info.get("view_count"),
+                like_count=info.get("like_count"),
+                platform="tiktok",
+                formats=formats,
+                best_url=best_url,
+                no_watermark_url=no_watermark_url,
+                audio_only_url=audio_only_url,
+                required_headers=DOWNLOAD_HEADERS.get("tiktok", {}),
+            )
+        except Exception as e:
+            last_err = str(e)
+            logger.debug(f"TikTok {hostname} failed: {last_err[:120]}")
+            continue
+
+    raise ValueError(
+        f"Impossible d'extraire cette vidéo TikTok. "
+        f"Vérifiez que la vidéo est publique. ({last_err[:100]})"
+    )
+
+
 # ─── Extraction principale ────────────────────────────────────────────────────
 
 async def extract_video_info(url: str, quality: str = "best") -> VideoInfo:
@@ -921,6 +1008,9 @@ async def extract_video_info(url: str, quality: str = "best") -> VideoInfo:
         raise ValueError(
             f"Plateforme non reconnue. Supportées : {', '.join(sorted(SUPPORTED_PLATFORMS))}"
         )
+
+    if platform == "tiktok":
+        return await _extract_tiktok(url)
 
     if platform == "pinterest":
         return await _extract_pinterest(url)
