@@ -29,6 +29,12 @@ class VideoController extends Controller
         'licdn.com', 'linkedin.com',
         'twimg.com', 'twitter.com', 'x.com',
         'akamaihd.net', 'cloudfront.net', 'akamai.net',
+        'redd.it', 'reddit.com', 'redditmedia.com', 'reddituploads.com',
+        'packaged-media.redd.it', 'v.redd.it',
+        'pinimg.com', 'v1.pinimg.com',
+        'dailymotioncdn.com', 'dailymotion.com',
+        'vimeocdn.com', 'vimeo.com',
+        'twitch.tv', 'jtvnw.net',
     ];
 
     private const PLATFORM_DOWNLOAD_HEADERS = [
@@ -542,7 +548,7 @@ class VideoController extends Controller
                     CURLOPT_SSL_VERIFYPEER => true,
                     CURLOPT_ENCODING       => '',
                     CURLOPT_BUFFERSIZE     => 65536,
-                    CURLOPT_WRITEFUNCTION  => function ($curl, $data) {
+                    CURLOPT_WRITEFUNCTION  => function ($_curl, $data) {
                         echo $data;
                         if (ob_get_level() > 0) ob_flush();
                         flush();

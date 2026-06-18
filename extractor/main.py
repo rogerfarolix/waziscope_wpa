@@ -154,7 +154,7 @@ PLATFORM_PATTERNS: dict[str, str] = {
     "dailymotion": r"(dailymotion\.com|dai\.ly)",
     "vimeo":       r"(vimeo\.com|player\.vimeo\.com)",
     "twitch":      r"(twitch\.tv|clips\.twitch\.tv)",
-    "reddit":      r"(reddit\.com|redd\.it|v\.redd\.it)",
+    "reddit":      r"(reddit\.com|redd\.it|v\.redd\.it|packaged-media\.redd\.it)",
     "rumble":      r"(rumble\.com)",
     "odysee":      r"(odysee\.com|lbry\.tv)",
     "snapchat":    r"(snapchat\.com|t\.snapchat\.com)",
@@ -1311,7 +1311,25 @@ def _reddit_json(url: str) -> Optional[VideoInfo]:
 async def _extract_reddit(url: str) -> VideoInfo:
     loop = asyncio.get_event_loop()
 
-    # Essai yt-dlp d'abord
+    # ── Cas 1 : URL CDN directe (packaged-media.redd.it / v.redd.it/*.mp4) ──
+    if re.search(r'(packaged-media\.redd\.it|v\.redd\.it/[^/]+\.mp4)', url):
+        clean = re.sub(r'\?.*$', '', url)
+        fmt = FormatInfo(format_id="0", ext="mp4", quality="best", url=clean)
+        return VideoInfo(
+            original_url=url, title="Vidéo Reddit",
+            platform="reddit", formats=[fmt],
+            best_url=clean, no_watermark_url=clean,
+            required_headers={"User-Agent": UA_DESKTOP, "Referer": "https://www.reddit.com/"},
+        )
+
+    # ── Cas 2 : URL courte /s/ → résoudre la redirection ─────────────────────
+    if re.search(r'reddit\.com/r/[^/]+/s/', url):
+        resolved = await loop.run_in_executor(executor, lambda: _resolve_redirect(url, UA_DESKTOP))
+        if resolved and resolved != url:
+            logger.info(f"Reddit /s/ resolved: {url} → {resolved[:80]}")
+            url = resolved
+
+    # ── Cas 3 : yt-dlp ────────────────────────────────────────────────────────
     opts = get_ydl_opts("reddit")
     def _try():
         with yt_dlp.YoutubeDL(opts) as ydl:
