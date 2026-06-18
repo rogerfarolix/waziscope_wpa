@@ -269,7 +269,7 @@ import {
   Download, AlertCircle, ShieldCheck, ShieldOff, UserRound, Eye, Heart,
   Zap, Clipboard, Film, List,
   PlayCircle, Bookmark, Users, Camera, Briefcase, Bird,
-  Video, Tv2, Radio, MessageSquare, PlaySquare, Globe, Rss, Music2,
+  Video, Tv2, Radio, PlaySquare, Globe, Rss, Music2,
 } from 'lucide-vue-next'
 
 const route  = useRoute()
@@ -307,7 +307,6 @@ const platformCards = [
   { id:'vimeo',       name:'Vimeo',        feat:'HD · Playlists',      badge:'HD' },
   { id:'dailymotion', name:'Dailymotion',  feat:'Playlists',           badge:null },
   { id:'twitch',      name:'Twitch',       feat:'Clips · VODs',        badge:null },
-  { id:'reddit',      name:'Reddit',       feat:'Posts vidéo',         badge:null },
   { id:'rumble',      name:'Rumble',       feat:'Longue durée',        badge:null },
   { id:'odysee',      name:'Odysee',       feat:'Open source',         badge:null },
   { id:'snapchat',    name:'Snapchat',     feat:'Spotlight',           badge:null },
@@ -317,7 +316,7 @@ const platformCards = [
 const platformIcon = id => ({
   tiktok:Music2, youtube:PlayCircle, pinterest:Bookmark, facebook:Users,
   instagram:Camera, linkedin:Briefcase, twitter:Bird, dailymotion:Video,
-  vimeo:Tv2, twitch:Radio, reddit:MessageSquare, rumble:PlaySquare,
+  vimeo:Tv2, twitch:Radio, rumble:PlaySquare,
   odysee:Globe, snapchat:Rss, bilibili:Film,
 }[id] ?? Film)
 
@@ -797,7 +796,6 @@ const fmt    = s => {
 .pc-vimeo       { background: rgba(26,183,234,.08); }
 .pc-dailymotion { background: rgba(0,156,255,.08); }
 .pc-twitch      { background: rgba(100,65,164,.08); }
-.pc-reddit      { background: rgba(255,69,0,.08); }
 .pc-rumble      { background: rgba(133,197,21,.08); }
 .pc-odysee      { background: rgba(239,60,50,.08); }
 .pc-snapchat    { background: rgba(255,252,0,.08); }
@@ -813,7 +811,6 @@ const fmt    = s => {
 .plat-card:hover .pc-vimeo       { background:rgba(26,183,234,.15);    color:#1ab7ea; }
 .plat-card:hover .pc-dailymotion { background:rgba(0,156,255,.15);     color:#009cff; }
 .plat-card:hover .pc-twitch      { background:rgba(100,65,164,.2);     color:#6441a4; }
-.plat-card:hover .pc-reddit      { background:rgba(255,69,0,.15);      color:#ff4500; }
 .plat-card:hover .pc-rumble      { background:rgba(133,197,21,.15);    color:#85c515; }
 .plat-card:hover .pc-odysee      { background:rgba(239,60,50,.15);     color:#ef3c32; }
 .plat-card:hover .pc-snapchat    { background:rgba(255,252,0,.12);     color:#fffc00; }

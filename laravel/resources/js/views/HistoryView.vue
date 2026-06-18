@@ -126,7 +126,7 @@ import {
   DownloadCloud, Trash2, Layers,
   BarChart3, PieChart, Activity, TrendingUp, CalendarDays,
   Music2, PlayCircle, Bookmark, Users, Camera, Briefcase, Bird, Film,
-  Video, Tv2, Radio, MessageSquare, PlaySquare, Globe, Rss,
+  Video, Tv2, Radio, PlaySquare, Globe, Rss,
 } from 'lucide-vue-next'
 
 const items = ref([])
@@ -153,7 +153,7 @@ const PLATFORM_NAMES = {
   tiktok: 'TikTok',       youtube: 'YouTube',      pinterest: 'Pinterest',
   facebook: 'Facebook',   instagram: 'Instagram',  linkedin: 'LinkedIn',
   twitter: 'Twitter/X',   dailymotion: 'Dailymotion', vimeo: 'Vimeo',
-  twitch: 'Twitch',       reddit: 'Reddit',        rumble: 'Rumble',
+  twitch: 'Twitch',       rumble: 'Rumble',
   odysee: 'Odysee',       snapchat: 'Snapchat',    bilibili: 'Bilibili',
 }
 
@@ -190,7 +190,7 @@ const platformIcon = (id) => ({
   tiktok: Music2,        youtube: PlayCircle,  pinterest: Bookmark,
   facebook: Users,       instagram: Camera,    linkedin: Briefcase, twitter: Bird,
   dailymotion: Video,    vimeo: Tv2,           twitch: Radio,
-  reddit: MessageSquare, rumble: PlaySquare,   odysee: Globe,
+  rumble: PlaySquare,   odysee: Globe,
   snapchat: Rss,         bilibili: Film,
 }[id] || Film)
 
@@ -198,7 +198,7 @@ const platformColor = (id) => ({
   tiktok: '#ff2d55',      youtube: '#ff0033',    pinterest: '#e60023',
   facebook: '#1877f2',    instagram: '#e1306c',  linkedin: '#0a66c2',
   twitter: '#1da1f2',     dailymotion: '#0096e6', vimeo: '#1ab7ea',
-  twitch: '#9146ff',      reddit: '#ff4500',     rumble: '#85c742',
+  twitch: '#9146ff',      rumble: '#85c742',
   odysee: '#e04040',      snapchat: '#f5d020',   bilibili: '#fb7299',
 }[id] || '#3a4155')
 

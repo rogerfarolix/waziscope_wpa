@@ -1,7 +1,7 @@
 """
 WaziScope - FastAPI Extractor Service v3.0
 Nouvelles fonctionnalités:
-  - Plateformes étendues: Dailymotion, Vimeo, Twitch, Reddit, Rumble, Snapchat, Odysee
+  - Plateformes étendues: Dailymotion, Vimeo, Twitch, Rumble, Snapchat, Odysee
   - Support playlists YouTube (et autres)
   - Téléchargement longs métrages (pas de limite de durée)
   - Sélection de qualité par requête
@@ -44,7 +44,7 @@ _progress_store: dict[str, dict] = {}
 
 app = FastAPI(
     title="WaziScope Extractor",
-    description="Extraire les URLs de vidéos depuis TikTok, YouTube, Pinterest, Facebook, Instagram, LinkedIn, Twitter, Dailymotion, Vimeo, Twitch, Reddit, Rumble, Odysee…",
+    description="Extraire les URLs de vidéos depuis TikTok, YouTube, Pinterest, Facebook, Instagram, LinkedIn, Twitter, Dailymotion, Vimeo, Twitch, Rumble, Odysee…",
     version="3.0.0",
 )
 
@@ -155,7 +155,6 @@ PLATFORM_PATTERNS: dict[str, str] = {
     "dailymotion": r"(dailymotion\.com|dai\.ly)",
     "vimeo":       r"(vimeo\.com|player\.vimeo\.com)",
     "twitch":      r"(twitch\.tv|clips\.twitch\.tv)",
-    "reddit":      r"(reddit\.com|redd\.it|v\.redd\.it|packaged-media\.redd\.it)",
     "rumble":      r"(rumble\.com)",
     "odysee":      r"(odysee\.com|lbry\.tv)",
     "snapchat":    r"(snapchat\.com|t\.snapchat\.com)",
@@ -250,11 +249,6 @@ DOWNLOAD_HEADERS: dict[str, dict] = {
     "twitch": {
         "User-Agent": UA_DESKTOP,
         "Referer": "https://www.twitch.tv/",
-        "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.8",
-    },
-    "reddit": {
-        "User-Agent": UA_DESKTOP,
-        "Referer": "https://www.reddit.com/",
         "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.8",
     },
     "rumble": {
@@ -413,16 +407,6 @@ def get_ydl_opts(platform: str, quality: str = "best") -> dict:
             "http_headers": {
                 **base["http_headers"],
                 "Referer": "https://www.twitch.tv/",
-            },
-        })
-
-    elif platform == "reddit":
-        base.update({
-            "format": "best[ext=mp4]/bestvideo+bestaudio/best",
-            "merge_output_format": "mp4",
-            "http_headers": {
-                **base["http_headers"],
-                "Referer": "https://www.reddit.com/",
             },
         })
 
@@ -1240,197 +1224,6 @@ async def _extract_dailymotion(url: str) -> VideoInfo:
     raise ValueError("Impossible d'extraire cette vidéo Dailymotion.")
 
 
-# ─── Reddit : JSON API sans authentification ──────────────────────────────────
-
-def _reddit_json(url: str) -> Optional[VideoInfo]:
-    """Extrait une vidéo Reddit via leur API JSON publique."""
-    clean = re.sub(r'\?.*$', '', url.rstrip('/'))
-    if not clean.endswith('.json'):
-        clean += '.json'
-    api_url = clean + '?raw_json=1&limit=1'
-
-    _hdrs = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                      "AppleWebKit/537.36 (KHTML, like Gecko) "
-                      "Chrome/125.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "en-US,en;q=0.7",
-        "Sec-Fetch-Dest": "empty",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Site": "same-origin",
-    }
-    try:
-        with httpx.Client(follow_redirects=True, timeout=15, headers=_hdrs) as c:
-            resp = c.get(api_url)
-            if resp.status_code != 200:
-                logger.debug(f"Reddit JSON {resp.status_code} for {api_url[:80]}")
-                return None
-            data = resp.json()
-    except Exception as e:
-        logger.debug(f"Reddit JSON parse error: {e}")
-        return None
-
-    try:
-        post = data[0]["data"]["children"][0]["data"]
-    except (KeyError, IndexError, TypeError):
-        return None
-
-    # Vidéo Reddit native (v.redd.it)
-    media = post.get("media") or post.get("secure_media") or {}
-    reddit_video = media.get("reddit_video") or {}
-    video_url = reddit_video.get("fallback_url") or reddit_video.get("hls_url")
-
-    if not video_url:
-        # Crossposts
-        cp = post.get("crosspost_parent_list") or []
-        for cp_post in cp:
-            cp_media = cp_post.get("media") or {}
-            cp_video = cp_media.get("reddit_video") or {}
-            video_url = cp_video.get("fallback_url")
-            if video_url:
-                break
-
-    if not video_url:
-        return None
-
-    # Nettoyer les params de tracking
-    video_url = re.sub(r'\?.*$', '', video_url)
-
-    title     = post.get("title") or "Vidéo Reddit"
-    thumbnail = post.get("thumbnail")
-    if thumbnail in ("self", "default", "nsfw", "spoiler", ""):
-        thumbnail = None
-    duration  = reddit_video.get("duration")
-    author    = post.get("author")
-
-    fmt = FormatInfo(format_id="0", ext="mp4", quality="best", url=video_url)
-    return VideoInfo(
-        original_url=url, title=title[:200], author=author,
-        thumbnail=thumbnail, duration=duration,
-        platform="reddit",
-        formats=[fmt], best_url=video_url, no_watermark_url=video_url,
-        required_headers={
-            "User-Agent": UA_DESKTOP,
-            "Referer": "https://www.reddit.com/",
-        },
-    )
-
-
-async def _extract_reddit(url: str) -> VideoInfo:
-    loop = asyncio.get_event_loop()
-
-    # ── Cas 1 : URL CDN directe (packaged-media.redd.it / v.redd.it/*.mp4) ──
-    if re.search(r'(packaged-media\.redd\.it|v\.redd\.it/[^/]+\.mp4)', url):
-        clean = re.sub(r'\?.*$', '', url)
-        fmt = FormatInfo(format_id="0", ext="mp4", quality="best", url=clean)
-        return VideoInfo(
-            original_url=url, title="Vidéo Reddit",
-            platform="reddit", formats=[fmt],
-            best_url=clean, no_watermark_url=clean,
-            required_headers={"User-Agent": UA_DESKTOP, "Referer": "https://www.reddit.com/"},
-        )
-
-    # ── Cas 2 : URL courte /s/ → extraire l'URL réelle ───────────────────────
-    if re.search(r'reddit\.com/r/[^/]+/s/', url):
-        def _resolve_reddit_share(share_url: str) -> str:
-            _hdrs = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                              "AppleWebKit/537.36 (KHTML, like Gecko) "
-                              "Chrome/125.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.7",
-                "Sec-Fetch-Dest": "document",
-                "Sec-Fetch-Mode": "navigate",
-                "Sec-Fetch-Site": "none",
-                "Upgrade-Insecure-Requests": "1",
-            }
-            # Étape 1 : capturer le Location sans suivre la redirection
-            try:
-                with httpx.Client(follow_redirects=False, timeout=10, headers=_hdrs) as c:
-                    r = c.get(share_url)
-                    loc = r.headers.get("location", "")
-                    if loc and "/comments/" in loc:
-                        return loc if loc.startswith("http") else "https://www.reddit.com" + loc
-                    # Chercher dans le HTML (page de login / error)
-                    m = re.search(
-                        r'https?://(?:www\.)?reddit\.com/r/[^/]+/comments/[^"\'>\s]+', r.text
-                    )
-                    if m:
-                        return m.group(0)
-            except Exception as e:
-                logger.debug(f"Reddit /s/ no-redirect failed: {e}")
-            # Étape 2 : suivre la redirection complète
-            try:
-                with httpx.Client(follow_redirects=True, timeout=12, headers=_hdrs) as c:
-                    r = c.get(share_url)
-                    final = str(r.url)
-                    if "reddit.com" in final and "/comments/" in final:
-                        return final
-            except Exception as e:
-                logger.debug(f"Reddit /s/ follow-redirect failed: {e}")
-            return share_url
-        resolved = await loop.run_in_executor(executor, _resolve_reddit_share, url)
-        if resolved and resolved != url:
-            logger.info(f"Reddit /s/ resolved: {url} → {resolved[:80]}")
-            url = resolved
-
-        # Si l'URL est toujours une URL /s/ (redirection bloquée), on tente
-        # le JSON sur www + old.reddit.com avant d'appeler yt-dlp
-        if re.search(r'reddit\.com/r/[^/]+/s/', url):
-            def _try_share_json(base: str) -> Optional[VideoInfo]:
-                # Essaie POST-like : /s/ID.json → Reddit redirige vers le post
-                share_json = re.sub(r'https?://(?:www\.|old\.)?reddit\.com',
-                                    base, url.rstrip('/'))
-                return _reddit_json(share_json)
-
-            for _base in ("https://old.reddit.com", "https://www.reddit.com"):
-                r = await loop.run_in_executor(executor, _try_share_json, _base)
-                if r:
-                    return r
-
-            raise ValueError(
-                "Ce lien de partage Reddit (/s/) ne peut pas être résolu depuis ce serveur. "
-                "Copiez l'URL complète du post (reddit.com/r/.../comments/...) et réessayez."
-            )
-
-    # ── Cas 3 : yt-dlp ────────────────────────────────────────────────────────
-    # Guard : les URLs /s/ non résolues ne doivent jamais arriver ici
-    if re.search(r'reddit\.com/r/[^/]+/s/', url):
-        raise ValueError(
-            "Ce lien de partage Reddit (/s/) ne peut pas être résolu depuis ce serveur. "
-            "Copiez l'URL complète du post (reddit.com/r/.../comments/...) et réessayez."
-        )
-    opts = get_ydl_opts("reddit")
-    def _try():
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            return ydl.extract_info(url, download=False)
-    try:
-        info = await loop.run_in_executor(executor, _try)
-        if info:
-            formats, best_url, no_wm_url, audio_url = _parse_formats(info, "reddit")
-            if best_url:
-                return VideoInfo(
-                    original_url=url, title=info.get("title") or "Vidéo Reddit",
-                    author=info.get("uploader"), thumbnail=info.get("thumbnail"),
-                    duration=info.get("duration"), view_count=info.get("view_count"),
-                    platform="reddit", formats=formats,
-                    best_url=best_url, no_watermark_url=no_wm_url or best_url,
-                    audio_only_url=audio_url,
-                    required_headers=DOWNLOAD_HEADERS.get("reddit", {}),
-                )
-    except Exception as e:
-        logger.debug(f"Reddit yt-dlp failed: {e}")
-
-    logger.info("Reddit: yt-dlp failed, fallback JSON API...")
-    result = await loop.run_in_executor(executor, _reddit_json, url)
-    if result:
-        return result
-    raise ValueError(
-        "Impossible d'extraire cette vidéo Reddit. "
-        "Vérifiez que le post est public et contient une vidéo native."
-    )
-
-
 # ─── Extraction principale ────────────────────────────────────────────────────
 
 async def extract_video_info(url: str, quality: str = "best") -> VideoInfo:
@@ -1454,8 +1247,6 @@ async def extract_video_info(url: str, quality: str = "best") -> VideoInfo:
     if platform == "dailymotion":
         return await _extract_dailymotion(url)
 
-    if platform == "reddit":
-        return await _extract_reddit(url)
 
     ydl_opts = get_ydl_opts(platform, quality)
     loop     = asyncio.get_event_loop()
@@ -1597,7 +1388,6 @@ async def get_platforms():
             {"id": "dailymotion", "name": "Dailymotion",   "no_watermark": False, "notes": "Toutes qualités"},
             {"id": "vimeo",       "name": "Vimeo",         "no_watermark": False, "notes": "HD jusqu'à 4K"},
             {"id": "twitch",      "name": "Twitch",        "no_watermark": False, "notes": "Clips & VODs"},
-            {"id": "reddit",      "name": "Reddit",        "no_watermark": False, "notes": "Vidéos v.redd.it"},
             {"id": "rumble",      "name": "Rumble",        "no_watermark": False, "notes": "Toutes qualités"},
             {"id": "odysee",      "name": "Odysee",        "no_watermark": False, "notes": "Vidéos LBRY/Odysee"},
             {"id": "snapchat",    "name": "Snapchat",      "no_watermark": False, "notes": "Spotlight publics"},
