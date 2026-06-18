@@ -710,16 +710,19 @@ def _pinterest_scrape(url: str) -> Optional[VideoInfo]:
     )
     all_video_urls = video_urls + pinimg_urls
     if all_video_urls:
-        best_url = all_video_urls[-1]
+        # Préférer les MP4 aux HLS, convertir si nécessaire
+        mp4_urls = [u for u in all_video_urls if u.endswith(".mp4")]
+        best_url = _pinimg_hls_to_mp4(mp4_urls[-1] if mp4_urls else all_video_urls[-1])
         title = _extract_pinterest_title(html) or "Vidéo Pinterest"
         thumb_m = re.search(r'property="og:image"\s+content="([^"]+)"', html)
         thumbnail = thumb_m.group(1) if thumb_m else None
+        ext = "mp4" if best_url and best_url.endswith(".mp4") else "m3u8"
         return VideoInfo(
             original_url=resolved_url,
             title=title,
             thumbnail=thumbnail,
             platform="pinterest",
-            formats=[FormatInfo(format_id="0", ext="mp4", quality="best", url=best_url)],
+            formats=[FormatInfo(format_id="0", ext=ext, quality="best", url=best_url)],
             best_url=best_url,
             no_watermark_url=best_url,
             required_headers=DOWNLOAD_HEADERS["pinterest"],
@@ -825,6 +828,17 @@ def _parse_pinterest_redux(data: dict, original_url: str) -> Optional[VideoInfo]
     return None
 
 
+def _pinimg_hls_to_mp4(url: Optional[str]) -> Optional[str]:
+    """Convertit une URL HLS pinimg.com en MP4 direct (même contenu, format différent)."""
+    if not url:
+        return url
+    # https://v1.pinimg.com/videos/iht/hls/v2/.../file_720w.m3u8
+    # → https://v1.pinimg.com/videos/iht/expMp4/v2/.../file_720w.mp4
+    if "pinimg.com" in url and "/hls/" in url and url.endswith(".m3u8"):
+        return url.replace("/hls/", "/expMp4/").replace(".m3u8", ".mp4")
+    return url
+
+
 async def _extract_pinterest(url: str) -> VideoInfo:
     loop = asyncio.get_event_loop()
 
@@ -847,8 +861,18 @@ async def _extract_pinterest(url: str) -> VideoInfo:
         formats, best_url, no_watermark_url, audio_only_url = _parse_formats(info, "pinterest")
         if best_url:
             raw_title = info.get("title") or ""
-            # yt-dlp retourne parfois "." ou un titre vide — on ignore
             good_title = raw_title.strip() if len(raw_title.strip()) > 3 else None
+
+            # Convertir HLS pinimg → MP4 direct (même CDN, chemin différent)
+            best_url         = _pinimg_hls_to_mp4(best_url)
+            no_watermark_url = _pinimg_hls_to_mp4(no_watermark_url or best_url)
+
+            # Si le titre est toujours générique, tenter l'HTML en parallèle
+            if not good_title:
+                scrape_result = await loop.run_in_executor(executor, _pinterest_scrape, url)
+                if scrape_result and scrape_result.title and len(scrape_result.title) > 3:
+                    good_title = scrape_result.title
+
             return VideoInfo(
                 original_url=url,
                 title=good_title or "Vidéo Pinterest",
@@ -859,7 +883,7 @@ async def _extract_pinterest(url: str) -> VideoInfo:
                 platform="pinterest",
                 formats=formats,
                 best_url=best_url,
-                no_watermark_url=no_watermark_url or best_url,
+                no_watermark_url=no_watermark_url,
                 audio_only_url=audio_only_url,
                 required_headers=DOWNLOAD_HEADERS["pinterest"],
             )
