@@ -1394,6 +1394,12 @@ async def _extract_reddit(url: str) -> VideoInfo:
             )
 
     # ── Cas 3 : yt-dlp ────────────────────────────────────────────────────────
+    # Guard : les URLs /s/ non résolues ne doivent jamais arriver ici
+    if re.search(r'reddit\.com/r/[^/]+/s/', url):
+        raise ValueError(
+            "Ce lien de partage Reddit (/s/) ne peut pas être résolu depuis ce serveur. "
+            "Copiez l'URL complète du post (reddit.com/r/.../comments/...) et réessayez."
+        )
     opts = get_ydl_opts("reddit")
     def _try():
         with yt_dlp.YoutubeDL(opts) as ydl:
