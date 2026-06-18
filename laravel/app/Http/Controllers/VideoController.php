@@ -13,9 +13,10 @@ class VideoController extends Controller
 {
     private string $extractorUrl;
 
-    private const CACHE_TTL       = 600;  // 10 min
-    private const EXTRACT_TIMEOUT = 60;
-    private const FAST_TIMEOUT    = 5;
+    private const CACHE_TTL          = 600;   // 10 min
+    private const EXTRACT_TIMEOUT    = 90;    // long videos need more time
+    private const PLAYLIST_TIMEOUT   = 120;
+    private const FAST_TIMEOUT       = 5;
 
     private const ALLOWED_PROXY_DOMAINS = [
         'tiktokcdn.com', 'tiktokv.com', 'tiktokcdn-us.com',
@@ -346,12 +347,88 @@ class VideoController extends Controller
         );
     }
 
+    // ─── Extract playlist ──────────────────────────────────────────────────────
+
+    public function extractPlaylist(Request $request): JsonResponse
+    {
+        $request->validate([
+            'url'   => ['required', 'url', 'max:2048'],
+            'limit' => ['nullable', 'integer', 'min:1', 'max:50'],
+        ]);
+
+        $url   = trim($request->input('url'));
+        $limit = (int) $request->input('limit', 20);
+
+        try {
+            $res  = Http::timeout(self::PLAYLIST_TIMEOUT)
+                ->post("{$this->extractorUrl}/extract/playlist", [
+                    'url'   => $url,
+                    'limit' => $limit,
+                ]);
+
+            if ($res->serverError()) {
+                throw new \Exception("Extractor error {$res->status()}");
+            }
+
+            $data = $res->json();
+
+            if (isset($data['items'])) {
+                $data['items'] = array_map(function ($item) {
+                    if (($item['success'] ?? false) && isset($item['data'])) {
+                        $item['data'] = $this->normalizeVideoData($item['data']);
+                    }
+                    return $item;
+                }, $data['items']);
+            }
+
+            return response()->json($data);
+
+        } catch (\Exception $e) {
+            Log::error('WaziScope playlist', ['url' => $url, 'error' => $e->getMessage()]);
+            return response()->json(['success' => false, 'message' => 'Erreur extraction playlist'], 500);
+        }
+    }
+
+    // ─── SSE progress ──────────────────────────────────────────────────────────
+
+    public function progress(string $jobId): \Symfony\Component\HttpFoundation\StreamedResponse
+    {
+        return response()->stream(function () use ($jobId) {
+            $cacheKey = "wzs_job_{$jobId}";
+            $timeout  = 60;
+            $start    = time();
+
+            while (time() - $start < $timeout) {
+                $data = Cache::get($cacheKey);
+
+                if ($data !== null) {
+                    echo "data: " . json_encode($data) . "\n\n";
+                    if (ob_get_level() > 0) ob_flush();
+                    flush();
+
+                    if (in_array($data['status'] ?? '', ['done', 'error'])) {
+                        break;
+                    }
+                }
+
+                usleep(500000); // 0.5s polling
+            }
+        }, 200, [
+            'Content-Type'  => 'text/event-stream',
+            'Cache-Control' => 'no-cache',
+            'X-Accel-Buffering' => 'no',
+            'Connection'    => 'keep-alive',
+        ]);
+    }
+
     // ─── Check ffmpeg capability (API endpoint) ────────────────────────────────
 
     public function checkCapabilities(): JsonResponse
     {
         return response()->json([
-            'ffmpeg' => (bool) $this->getFfmpegPath(),
+            'ffmpeg'   => (bool) $this->getFfmpegPath(),
+            'version'  => '3.0',
+            'laravel'  => app()->version(),
         ]);
     }
 
@@ -406,7 +483,7 @@ class VideoController extends Controller
         curl_exec($ch);
         $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $error    = curl_error($ch);
-        curl_close($ch);
+        unset($ch);
         fclose($fp);
 
         if ($error) {
@@ -453,7 +530,7 @@ class VideoController extends Controller
                     CURLOPT_SSL_VERIFYPEER => true,
                     CURLOPT_ENCODING       => '',
                     CURLOPT_BUFFERSIZE     => 65536,
-                    CURLOPT_WRITEFUNCTION  => function ($ch, $data) {
+                    CURLOPT_WRITEFUNCTION  => function ($curl, $data) {
                         echo $data;
                         if (ob_get_level() > 0) ob_flush();
                         flush();
@@ -464,7 +541,7 @@ class VideoController extends Controller
                 ]);
                 curl_exec($ch);
                 $error = curl_error($ch);
-                curl_close($ch);
+                unset($ch);
                 if ($error) Log::error('WaziScope cURL stream error', ['error' => $error]);
             },
             $filename,
@@ -535,7 +612,7 @@ class VideoController extends Controller
         ]);
         curl_exec($ch);
         $result = ['http_code' => (int) curl_getinfo($ch, CURLINFO_HTTP_CODE), 'error' => curl_error($ch)];
-        curl_close($ch);
+        unset($ch);
         return $result;
     }
 

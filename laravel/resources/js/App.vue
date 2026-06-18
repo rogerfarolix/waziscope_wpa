@@ -166,13 +166,21 @@ const dismissInstall = () => {
   --mint-glow:   rgba(27,255,164,0.25);
 
   /* Platform palette */
-  --col-tiktok:    #ff2d55;
-  --col-youtube:   #ff0033;
-  --col-pinterest: #e60023;
-  --col-facebook:  #1877f2;
-  --col-instagram: #e1306c;
-  --col-linkedin:  #0a66c2;
-  --col-twitter:   #1da1f2;
+  --col-tiktok:      #ff2d55;
+  --col-youtube:     #ff0033;
+  --col-pinterest:   #e60023;
+  --col-facebook:    #1877f2;
+  --col-instagram:   #e1306c;
+  --col-linkedin:    #0a66c2;
+  --col-twitter:     #1da1f2;
+  --col-dailymotion: #0096e6;
+  --col-vimeo:       #1ab7ea;
+  --col-twitch:      #9146ff;
+  --col-reddit:      #ff4500;
+  --col-rumble:      #85c742;
+  --col-odysee:      #e04040;
+  --col-snapchat:    #fffc00;
+  --col-bilibili:    #fb7299;
 
   /* State */
   --success: #22c55e;
@@ -423,7 +431,7 @@ main { margin-top: var(--nav-h); min-height: calc(100dvh - var(--nav-h)); }
 ::-webkit-scrollbar-thumb { background: var(--text-lo); border-radius: 2px; }
 
 /* ── Utility ───────────────────────────────────────────────────────────────── */
-.container { max-width: 640px; margin: 0 auto; padding: 0 20px; }
+.container { max-width: 1200px; margin: 0 auto; padding: 0 24px; }
 
 /* Spinner */
 @keyframes spin { to { transform: rotate(360deg); } }

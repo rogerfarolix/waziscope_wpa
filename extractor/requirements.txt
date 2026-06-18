@@ -1,9 +1,11 @@
-# WaziScope Extractor - Dépendances
+# WaziScope Extractor v3 — Dépendances
 # Installer avec : pip install -r requirements.txt
+# Mettre à jour yt-dlp régulièrement : pip install -U yt-dlp
 
-fastapi==0.115.5
-uvicorn[standard]==0.32.1
-yt-dlp>=2024.11.4         # Toujours garder à jour : pip install -U yt-dlp
-pydantic==2.10.3
-httpx==0.28.0
-python-multipart==0.0.20
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+yt-dlp>=2026.1.1         # Toujours garder à jour : pip install -U yt-dlp
+pydantic>=2.10.0
+httpx>=0.28.0
+python-multipart>=0.0.20
+aiofiles>=24.1.0          # Lecture de fichiers asynchrone

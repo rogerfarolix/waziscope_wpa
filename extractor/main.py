@@ -1,14 +1,17 @@
 """
-WaziScope - FastAPI Extractor Service v2.2
-Fixes:
-  - Facebook: résolution share/r/ + scraper HTML fallback (reels, videos)
-  - Pinterest: fallback scraper HTML quand yt-dlp échoue
-  - TikTok: headers CDN corrects
-  - pin.it: résolution de redirection avant extraction
+WaziScope - FastAPI Extractor Service v3.0
+Nouvelles fonctionnalités:
+  - Plateformes étendues: Dailymotion, Vimeo, Twitch, Reddit, Rumble, Snapchat, Odysee
+  - Support playlists YouTube (et autres)
+  - Téléchargement longs métrages (pas de limite de durée)
+  - Sélection de qualité par requête
+  - Streaming SSE de progression via /extract/progress
+  - Meilleure détection TikTok, Pinterest, Facebook
 """
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 import yt_dlp
 import asyncio
@@ -19,6 +22,7 @@ import urllib.request
 import urllib.parse
 import json
 import gzip
+import uuid
 from typing import Optional, Any
 from concurrent.futures import ThreadPoolExecutor
 
@@ -30,14 +34,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger("waziscope")
 
-executor = ThreadPoolExecutor(max_workers=4)
+executor = ThreadPoolExecutor(max_workers=6)
+
+# Stockage en mémoire des progressions (jobId → état)
+_progress_store: dict[str, dict] = {}
 
 # ─── App ──────────────────────────────────────────────────────────────────────
 
 app = FastAPI(
     title="WaziScope Extractor",
-    description="Extraire les URLs de vidéos depuis TikTok, Pinterest, Facebook, YouTube, LinkedIn",
-    version="2.2.0",
+    description="Extraire les URLs de vidéos depuis TikTok, YouTube, Pinterest, Facebook, Instagram, LinkedIn, Twitter, Dailymotion, Vimeo, Twitch, Reddit, Rumble, Odysee…",
+    version="3.0.0",
 )
 
 app.add_middleware(
@@ -80,6 +87,8 @@ class VideoInfo(BaseModel):
     no_watermark_url: Optional[str] = None
     audio_only_url: Optional[str] = None
     required_headers: dict = {}
+    is_playlist: bool = False
+    playlist_count: Optional[int] = None
 
 
 class ExtractResponse(BaseModel):
@@ -108,19 +117,55 @@ class BatchResponse(BaseModel):
     failed: int
 
 
+class PlaylistRequest(BaseModel):
+    url: str
+    limit: int = 20
+
+    @field_validator("limit")
+    @classmethod
+    def cap_limit(cls, v):
+        return min(max(v, 1), 50)
+
+
+class PlaylistItem(BaseModel):
+    index: int
+    success: bool
+    data: Optional[VideoInfo] = None
+    error: Optional[str] = None
+
+
+class PlaylistResponse(BaseModel):
+    success: bool
+    playlist_title: Optional[str] = None
+    total: int
+    items: list[PlaylistItem] = []
+
+
 # ─── Détection plateforme ─────────────────────────────────────────────────────
 
 PLATFORM_PATTERNS: dict[str, str] = {
-    "tiktok":    r"(tiktok\.com|vm\.tiktok\.com|vt\.tiktok\.com)",
-    "youtube":   r"(youtube\.com|youtu\.be|youtube-nocookie\.com|music\.youtube\.com)",
-    "pinterest": r"(pinterest\.(com|fr|ca|co\.\w+|at|de|es|pt|ru|ch|it|nz|au|co\.uk)|pin\.it)",
-    "facebook":  r"(facebook\.com|fb\.com|fb\.watch|m\.facebook\.com)",
-    "instagram": r"(instagram\.com|instagr\.am)",
-    "linkedin":  r"(linkedin\.com|lnkd\.in)",
-    "twitter":   r"(twitter\.com|t\.co|x\.com)",
+    "tiktok":      r"(tiktok\.com|vm\.tiktok\.com|vt\.tiktok\.com)",
+    "youtube":     r"(youtube\.com|youtu\.be|youtube-nocookie\.com|music\.youtube\.com)",
+    "pinterest":   r"(pinterest\.(com|fr|ca|co\.\w+|at|de|es|pt|ru|ch|it|nz|au|co\.uk)|pin\.it)",
+    "facebook":    r"(facebook\.com|fb\.com|fb\.watch|m\.facebook\.com)",
+    "instagram":   r"(instagram\.com|instagr\.am)",
+    "linkedin":    r"(linkedin\.com|lnkd\.in)",
+    "twitter":     r"(twitter\.com|t\.co|x\.com)",
+    "dailymotion": r"(dailymotion\.com|dai\.ly)",
+    "vimeo":       r"(vimeo\.com|player\.vimeo\.com)",
+    "twitch":      r"(twitch\.tv|clips\.twitch\.tv)",
+    "reddit":      r"(reddit\.com|redd\.it|v\.redd\.it)",
+    "rumble":      r"(rumble\.com)",
+    "odysee":      r"(odysee\.com|lbry\.tv)",
+    "snapchat":    r"(snapchat\.com|t\.snapchat\.com)",
+    "bilibili":    r"(bilibili\.com|b23\.tv)",
+    "weibo":       r"(weibo\.com|weibo\.cn)",
 }
 
 SUPPORTED_PLATFORMS = set(PLATFORM_PATTERNS.keys())
+
+# Plateformes supportant les playlists
+PLAYLIST_PLATFORMS = {"youtube", "dailymotion", "vimeo", "twitch", "rumble", "odysee", "bilibili"}
 
 
 def detect_platform(url: str) -> str:
@@ -135,17 +180,17 @@ def detect_platform(url: str) -> str:
 UA_DESKTOP = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/124.0.0.0 Safari/537.36"
+    "Chrome/126.0.0.0 Safari/537.36"
 )
 UA_MOBILE = (
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) "
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) "
     "AppleWebKit/605.1.15 (KHTML, like Gecko) "
-    "Version/17.4 Mobile/15E148 Safari/604.1"
+    "Version/17.5 Mobile/15E148 Safari/604.1"
 )
 UA_ANDROID = (
-    "Mozilla/5.0 (Linux; Android 13; Pixel 7) "
+    "Mozilla/5.0 (Linux; Android 14; Pixel 8) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/124.0.6367.82 Mobile Safari/537.36"
+    "Chrome/126.0.6478.72 Mobile Safari/537.36"
 )
 
 
@@ -191,12 +236,62 @@ DOWNLOAD_HEADERS: dict[str, dict] = {
         "Referer": "https://twitter.com/",
         "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.8",
     },
+    "dailymotion": {
+        "User-Agent": UA_DESKTOP,
+        "Referer": "https://www.dailymotion.com/",
+        "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.8",
+    },
+    "vimeo": {
+        "User-Agent": UA_DESKTOP,
+        "Referer": "https://vimeo.com/",
+        "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.8",
+    },
+    "twitch": {
+        "User-Agent": UA_DESKTOP,
+        "Referer": "https://www.twitch.tv/",
+        "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.8",
+    },
+    "reddit": {
+        "User-Agent": UA_DESKTOP,
+        "Referer": "https://www.reddit.com/",
+        "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.8",
+    },
+    "rumble": {
+        "User-Agent": UA_DESKTOP,
+        "Referer": "https://rumble.com/",
+        "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.8",
+    },
+    "odysee": {
+        "User-Agent": UA_DESKTOP,
+        "Referer": "https://odysee.com/",
+        "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.8",
+    },
+    "snapchat": {
+        "User-Agent": UA_MOBILE,
+        "Referer": "https://www.snapchat.com/",
+        "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.8",
+    },
+    "bilibili": {
+        "User-Agent": UA_DESKTOP,
+        "Referer": "https://www.bilibili.com/",
+        "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.8",
+    },
 }
 
 
 # ─── Options yt-dlp ──────────────────────────────────────────────────────────
 
-def get_ydl_opts(platform: str) -> dict:
+def get_ydl_opts(platform: str, quality: str = "best") -> dict:
+    # Qualité YouTube par défaut: 1080p
+    yt_format = {
+        "4k":   "bestvideo[height<=2160][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=2160]+bestaudio/best",
+        "1080": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best",
+        "720":  "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best",
+        "480":  "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best",
+        "audio": "bestaudio[ext=m4a]/bestaudio",
+        "best": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[ext=mp4]/best",
+    }.get(quality, "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[ext=mp4]/best")
+
     base: dict = {
         "quiet": True,
         "no_warnings": True,
@@ -233,7 +328,7 @@ def get_ydl_opts(platform: str) -> dict:
 
     elif platform == "youtube":
         base.update({
-            "format": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[ext=mp4]/best",
+            "format": yt_format,
             "merge_output_format": "mp4",
             "http_headers": {
                 **base["http_headers"],
@@ -292,8 +387,83 @@ def get_ydl_opts(platform: str) -> dict:
             },
         })
 
+    elif platform == "dailymotion":
+        base.update({
+            "format": "best[ext=mp4]/bestvideo+bestaudio/best",
+            "http_headers": {
+                **base["http_headers"],
+                "Referer": "https://www.dailymotion.com/",
+            },
+        })
+
+    elif platform == "vimeo":
+        base.update({
+            "format": yt_format,
+            "merge_output_format": "mp4",
+            "http_headers": {
+                **base["http_headers"],
+                "Referer": "https://vimeo.com/",
+            },
+        })
+
+    elif platform == "twitch":
+        base.update({
+            "format": "best[ext=mp4]/bestvideo+bestaudio/best",
+            "http_headers": {
+                **base["http_headers"],
+                "Referer": "https://www.twitch.tv/",
+            },
+        })
+
+    elif platform == "reddit":
+        base.update({
+            "format": "best[ext=mp4]/bestvideo+bestaudio/best",
+            "merge_output_format": "mp4",
+            "http_headers": {
+                **base["http_headers"],
+                "Referer": "https://www.reddit.com/",
+            },
+        })
+
+    elif platform == "rumble":
+        base.update({
+            "format": "best[ext=mp4]/bestvideo+bestaudio/best",
+            "http_headers": {
+                **base["http_headers"],
+                "Referer": "https://rumble.com/",
+            },
+        })
+
+    elif platform == "odysee":
+        base.update({
+            "format": "best[ext=mp4]/bestvideo+bestaudio/best",
+            "http_headers": {
+                **base["http_headers"],
+                "Referer": "https://odysee.com/",
+            },
+        })
+
+    elif platform == "snapchat":
+        base.update({
+            "format": "best[ext=mp4]/best",
+            "http_headers": {
+                **base["http_headers"],
+                "User-Agent": UA_MOBILE,
+                "Referer": "https://www.snapchat.com/",
+            },
+        })
+
+    elif platform == "bilibili":
+        base.update({
+            "format": "bestvideo[ext=mp4]+bestaudio/best[ext=mp4]/best",
+            "http_headers": {
+                **base["http_headers"],
+                "Referer": "https://www.bilibili.com/",
+            },
+        })
+
     else:
-        base.update({"format": "best[ext=mp4]/best"})
+        base.update({"format": "best[ext=mp4]/bestvideo+bestaudio/best"})
 
     return base
 
@@ -301,7 +471,6 @@ def get_ydl_opts(platform: str) -> dict:
 # ─── Helpers HTTP communs ─────────────────────────────────────────────────────
 
 def _http_get_html(url: str, headers: dict, timeout: int = 20) -> Optional[str]:
-    """Effectue un GET HTTP et retourne le HTML décompressé."""
     try:
         req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -316,7 +485,6 @@ def _http_get_html(url: str, headers: dict, timeout: int = 20) -> Optional[str]:
 
 
 def _resolve_redirect(url: str, ua: str = UA_ANDROID) -> str:
-    """Résout les redirections HTTP d'une URL raccourcie."""
     try:
         req = urllib.request.Request(
             url,
@@ -337,13 +505,6 @@ def _resolve_redirect(url: str, ua: str = UA_ANDROID) -> str:
 # ─── Facebook scraper ─────────────────────────────────────────────────────────
 
 def _resolve_facebook_url(url: str) -> str:
-    """
-    Résout les URLs Facebook raccourcies :
-      - facebook.com/share/r/XXXX  (vidéo reel partagée)
-      - facebook.com/share/v/XXXX  (vidéo partagée)
-      - fb.watch/XXXX
-      - fb.com/...
-    """
     needs_resolve = (
         re.search(r'facebook\.com/share/', url, re.I) or
         re.search(r'fb\.watch/', url, re.I) or
@@ -359,11 +520,6 @@ def _resolve_facebook_url(url: str) -> str:
 
 
 def _facebook_scrape(url: str) -> Optional[VideoInfo]:
-    """
-    Scraper HTML Facebook.
-    Cherche les URLs vidéo dans les données JSON embarquées dans la page.
-    Fonctionne pour les vidéos publiques et la plupart des Reels.
-    """
     headers = {
         "User-Agent": UA_ANDROID,
         "Accept": "text/html,application/xhtml+xml,*/*;q=0.9",
@@ -377,10 +533,8 @@ def _facebook_scrape(url: str) -> Optional[VideoInfo]:
     if not html:
         return None
 
-    # Décoder les séquences d'échappement JSON Unicode
     html = html.replace('\\u0026', '&').replace('\\u003C', '<').replace('\\u003E', '>')
 
-    # Patterns priorités : HD > SD
     video_patterns = [
         r'"playable_url_quality_hd"\s*:\s*"(https?://[^"\\]+(?:\\.[^"\\]*)*)"',
         r'"browser_native_hd_url"\s*:\s*"(https?://[^"\\]+(?:\\.[^"\\]*)*)"',
@@ -388,7 +542,6 @@ def _facebook_scrape(url: str) -> Optional[VideoInfo]:
         r'"playable_url"\s*:\s*"(https?://[^"\\]+(?:\\.[^"\\]*)*)"',
         r'"browser_native_sd_url"\s*:\s*"(https?://[^"\\]+(?:\\.[^"\\]*)*)"',
         r'"sd_src"\s*:\s*"(https?://[^"\\]+(?:\\.[^"\\]*)*)"',
-        # Format alternatif dans __bbox
         r'"video_url"\s*:\s*"(https?://[^"\\]+(?:\\.[^"\\]*)*\.mp4[^"\\]*)"',
     ]
 
@@ -399,20 +552,16 @@ def _facebook_scrape(url: str) -> Optional[VideoInfo]:
             candidate = m.group(1).replace('\\/', '/').replace('\\/','/')
             if candidate.startswith('http'):
                 video_url = candidate
-                logger.debug(f"Facebook scraper found URL via pattern: {pattern[:40]}")
                 break
 
     if not video_url:
-        logger.warning("Facebook scraper: aucune URL vidéo trouvée dans le HTML")
         return None
 
-    # Titre
     title = "Vidéo Facebook"
     for tp in [
         r'"title"\s*:\s*\{"text"\s*:\s*"([^"]{3,200})"',
         r'<title[^>]*>([^<]{3,200})</title>',
         r'property="og:title"\s+content="([^"]{3,200})"',
-        r'content="([^"]{3,200})"\s+property="og:title"',
     ]:
         m = re.search(tp, html)
         if m:
@@ -421,12 +570,10 @@ def _facebook_scrape(url: str) -> Optional[VideoInfo]:
                 title = t
                 break
 
-    # Thumbnail
     thumbnail = None
     for tp in [
         r'"thumbnailImage"\s*:\s*\{"uri"\s*:\s*"([^"]+)"',
         r'property="og:image"\s+content="([^"]+)"',
-        r'content="([^"]+)"\s+property="og:image"',
     ]:
         m = re.search(tp, html)
         if m:
@@ -446,18 +593,10 @@ def _facebook_scrape(url: str) -> Optional[VideoInfo]:
 
 
 async def _extract_facebook(url: str) -> VideoInfo:
-    """
-    Extraction Facebook :
-    1. Résolution des URLs raccourcies (share/r/, fb.watch)
-    2. Tentative yt-dlp
-    3. Fallback scraper HTML
-    """
     loop = asyncio.get_event_loop()
 
-    # 1. Résoudre les URLs raccourcies
     url = await loop.run_in_executor(executor, _resolve_facebook_url, url)
 
-    # 2. Tenter yt-dlp
     ydl_opts = get_ydl_opts("facebook")
 
     def _ytdlp_extract():
@@ -490,7 +629,6 @@ async def _extract_facebook(url: str) -> VideoInfo:
                 required_headers=DOWNLOAD_HEADERS["facebook"],
             )
 
-    # 3. Fallback scraper HTML
     logger.info("Facebook: yt-dlp failed, trying HTML scraper...")
     result = await loop.run_in_executor(executor, _facebook_scrape, url)
 
@@ -499,7 +637,6 @@ async def _extract_facebook(url: str) -> VideoInfo:
 
     raise ValueError(
         "Impossible d'extraire cette vidéo Facebook. "
-        "Les vidéos privées ou protégées ne sont pas accessibles. "
         "Assurez-vous que la vidéo est publique."
     )
 
@@ -507,7 +644,6 @@ async def _extract_facebook(url: str) -> VideoInfo:
 # ─── Pinterest scraper ────────────────────────────────────────────────────────
 
 def _resolve_pin_it(url: str) -> str:
-    """Résout une URL pin.it en URL pinterest.com complète."""
     if "pin.it" not in url:
         return url
     resolved = _resolve_redirect(url, UA_MOBILE)
@@ -517,9 +653,7 @@ def _resolve_pin_it(url: str) -> str:
 
 
 def _pinterest_scrape(url: str) -> Optional[VideoInfo]:
-    """Scraper Pinterest HTML direct."""
     resolved_url = _resolve_pin_it(url)
-    logger.info(f"Pinterest scrape: {resolved_url[:80]}")
 
     headers = {
         "User-Agent": UA_MOBILE,
@@ -533,7 +667,6 @@ def _pinterest_scrape(url: str) -> Optional[VideoInfo]:
     if not html:
         return None
 
-    # __PWS_DATA__
     pws_match = re.search(
         r'<script[^>]+id="__PWS_DATA__"[^>]*>\s*(\{.*?\})\s*</script>',
         html, re.DOTALL,
@@ -547,7 +680,6 @@ def _pinterest_scrape(url: str) -> Optional[VideoInfo]:
         except Exception as e:
             logger.debug(f"PWS parse error: {e}")
 
-    # __redux_data__
     redux_match = re.search(
         r'window\.__redux_data__\s*=\s*(\{.*?\});\s*(?:window|</script>)',
         html, re.DOTALL,
@@ -561,7 +693,6 @@ def _pinterest_scrape(url: str) -> Optional[VideoInfo]:
         except Exception as e:
             logger.debug(f"Redux parse error: {e}")
 
-    # Recherche directe URLs vidéo
     video_urls = re.findall(
         r'"(?:url|V_720P|V_1080P|V_480P|V_240P)"\s*:\s*"(https://[^"]+(?:\.mp4|\.m3u8)[^"]*)"',
         html
@@ -580,7 +711,6 @@ def _pinterest_scrape(url: str) -> Optional[VideoInfo]:
             required_headers=DOWNLOAD_HEADERS["pinterest"],
         )
 
-    logger.warning("Pinterest: aucune vidéo trouvée dans le HTML")
     return None
 
 
@@ -597,7 +727,7 @@ def _parse_pinterest_pws(data: dict, original_url: str) -> Optional[VideoInfo]:
         title = "Vidéo Pinterest"
         thumbnail = None
 
-        for pin_id, pin_data in pins.items():
+        for _, pin_data in pins.items():
             if isinstance(pin_data, dict):
                 actual = pin_data.get("data", pin_data)
                 videos = actual.get("videos", {}) or actual.get("story_pin_data", {})
@@ -634,7 +764,7 @@ def _parse_pinterest_pws(data: dict, original_url: str) -> Optional[VideoInfo]:
 def _parse_pinterest_redux(data: dict, original_url: str) -> Optional[VideoInfo]:
     try:
         pins = data.get("pins", {})
-        for pin_id, pin_data in pins.items():
+        for _, pin_data in pins.items():
             videos = pin_data.get("videos", {})
             if not videos:
                 continue
@@ -664,12 +794,10 @@ def _parse_pinterest_redux(data: dict, original_url: str) -> Optional[VideoInfo]
 
 
 async def _extract_pinterest(url: str) -> VideoInfo:
-    """yt-dlp d'abord, puis fallback scraper HTML."""
     loop = asyncio.get_event_loop()
 
     if "pin.it" in url:
-        resolved = await loop.run_in_executor(executor, _resolve_pin_it, url)
-        url = resolved
+        url = await loop.run_in_executor(executor, _resolve_pin_it, url)
 
     ydl_opts = get_ydl_opts("pinterest")
 
@@ -709,8 +837,7 @@ async def _extract_pinterest(url: str) -> VideoInfo:
 
     raise ValueError(
         "Impossible d'extraire cette vidéo Pinterest. "
-        "Vérifiez que l'URL est une vidéo publique. "
-        "Si l'erreur persiste, essayez l'URL complète pinterest.com/pin/..."
+        "Vérifiez que l'URL est une vidéo publique."
     )
 
 
@@ -786,7 +913,7 @@ def _parse_formats(
 
 # ─── Extraction principale ────────────────────────────────────────────────────
 
-async def extract_video_info(url: str) -> VideoInfo:
+async def extract_video_info(url: str, quality: str = "best") -> VideoInfo:
     url      = url.strip()
     platform = detect_platform(url)
 
@@ -795,15 +922,13 @@ async def extract_video_info(url: str) -> VideoInfo:
             f"Plateforme non reconnue. Supportées : {', '.join(sorted(SUPPORTED_PLATFORMS))}"
         )
 
-    # Plateformes avec fallback scraper dédié
     if platform == "pinterest":
         return await _extract_pinterest(url)
 
     if platform == "facebook":
         return await _extract_facebook(url)
 
-    # Autres plateformes : yt-dlp direct
-    ydl_opts = get_ydl_opts(platform)
+    ydl_opts = get_ydl_opts(platform, quality)
     loop     = asyncio.get_event_loop()
 
     def _sync_extract() -> dict:
@@ -817,17 +942,29 @@ async def extract_video_info(url: str) -> VideoInfo:
         if "This video is private" in msg:
             raise ValueError("Cette vidéo est privée.")
         if "not available" in msg:
-            raise ValueError("Cette vidéo n'est pas disponible.")
+            raise ValueError("Cette vidéo n'est pas disponible dans votre région.")
         if "Sign in" in msg or "login" in msg.lower():
             raise ValueError("Cette vidéo nécessite une connexion.")
         if "removed" in msg.lower() or "deleted" in msg.lower():
             raise ValueError("Cette vidéo a été supprimée.")
+        if "members only" in msg.lower():
+            raise ValueError("Contenu réservé aux membres.")
         raise ValueError(f"Impossible d'extraire : {msg}")
     except Exception as e:
         raise ValueError(f"Erreur inattendue : {str(e)}")
 
     if not info:
         raise ValueError("Aucune information trouvée.")
+
+    # Gérer les playlists retournées par yt-dlp
+    if info.get("_type") == "playlist":
+        entries = info.get("entries") or []
+        if entries:
+            first_entry = entries[0]
+            if isinstance(first_entry, dict) and first_entry.get("url"):
+                info = first_entry
+            else:
+                raise ValueError("Playlist détectée — utilisez /extract/playlist pour les playlists.")
 
     formats, best_url, no_watermark_url, audio_only_url = _parse_formats(info, platform)
     required_headers = DOWNLOAD_HEADERS.get(platform, {})
@@ -850,6 +987,56 @@ async def extract_video_info(url: str) -> VideoInfo:
     )
 
 
+# ─── Extraction playlist ──────────────────────────────────────────────────────
+
+async def extract_playlist_info(url: str, limit: int = 20) -> PlaylistResponse:
+    platform = detect_platform(url)
+    loop     = asyncio.get_event_loop()
+
+    flat_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "extract_flat": True,
+        "socket_timeout": 30,
+        "playlistend": limit,
+    }
+
+    def _get_flat():
+        with yt_dlp.YoutubeDL(flat_opts) as ydl:
+            return ydl.extract_info(url, download=False)
+
+    try:
+        flat = await loop.run_in_executor(executor, _get_flat)
+    except Exception as e:
+        raise ValueError(f"Impossible de charger la playlist : {e}")
+
+    if not flat:
+        raise ValueError("Playlist introuvable ou vide.")
+
+    entries = flat.get("entries") or []
+    playlist_title = flat.get("title") or flat.get("playlist_title") or "Playlist"
+
+    async def _extract_entry(i: int, entry: dict) -> PlaylistItem:
+        entry_url = entry.get("url") or entry.get("webpage_url") or ""
+        if not entry_url.startswith("http"):
+            entry_url = f"https://www.youtube.com/watch?v={entry.get('id', '')}"
+        try:
+            info = await extract_video_info(entry_url)
+            return PlaylistItem(index=i, success=True, data=info)
+        except Exception as e:
+            return PlaylistItem(index=i, success=False, error=str(e))
+
+    tasks = [_extract_entry(i, e) for i, e in enumerate(entries[:limit])]
+    items = await asyncio.gather(*tasks, return_exceptions=False)
+
+    return PlaylistResponse(
+        success=True,
+        playlist_title=playlist_title,
+        total=len(entries),
+        items=list(items),
+    )
+
+
 # ─── Routes ──────────────────────────────────────────────────────────────────
 
 @app.get("/health", tags=["Système"])
@@ -857,8 +1044,9 @@ async def health():
     return {
         "status": "ok",
         "service": "waziscope-extractor",
-        "version": "2.2.0",
+        "version": "3.0.0",
         "yt_dlp_version": yt_dlp.version.__version__,
+        "supported_platforms": sorted(SUPPORTED_PLATFORMS),
     }
 
 
@@ -866,27 +1054,38 @@ async def health():
 async def get_platforms():
     return {
         "platforms": [
-            {"id": "tiktok",    "name": "TikTok",    "no_watermark": True,  "notes": "Sans watermark via API mobile"},
-            {"id": "youtube",   "name": "YouTube",   "no_watermark": False, "notes": "HD jusqu'à 1080p"},
-            {"id": "pinterest", "name": "Pinterest", "no_watermark": False, "notes": "MP4 direct (scraper intégré)"},
-            {"id": "facebook",  "name": "Facebook",  "no_watermark": False, "notes": "Vidéos & Reels publics (scraper intégré)"},
-            {"id": "instagram", "name": "Instagram", "no_watermark": False, "notes": "Reels & posts publics"},
-            {"id": "linkedin",  "name": "LinkedIn",  "no_watermark": False, "notes": "Vidéos natives"},
-            {"id": "twitter",   "name": "Twitter/X", "no_watermark": False, "notes": "Vidéos tweets"},
+            {"id": "tiktok",      "name": "TikTok",       "no_watermark": True,  "notes": "Sans watermark via API mobile"},
+            {"id": "youtube",     "name": "YouTube",       "no_watermark": False, "notes": "HD jusqu'à 4K, playlists supportées"},
+            {"id": "pinterest",   "name": "Pinterest",     "no_watermark": False, "notes": "MP4 direct (scraper intégré)"},
+            {"id": "facebook",    "name": "Facebook",      "no_watermark": False, "notes": "Vidéos & Reels publics"},
+            {"id": "instagram",   "name": "Instagram",     "no_watermark": False, "notes": "Reels & posts publics"},
+            {"id": "linkedin",    "name": "LinkedIn",      "no_watermark": False, "notes": "Vidéos natives"},
+            {"id": "twitter",     "name": "Twitter/X",     "no_watermark": False, "notes": "Vidéos tweets"},
+            {"id": "dailymotion", "name": "Dailymotion",   "no_watermark": False, "notes": "Toutes qualités"},
+            {"id": "vimeo",       "name": "Vimeo",         "no_watermark": False, "notes": "HD jusqu'à 4K"},
+            {"id": "twitch",      "name": "Twitch",        "no_watermark": False, "notes": "Clips & VODs"},
+            {"id": "reddit",      "name": "Reddit",        "no_watermark": False, "notes": "Vidéos v.redd.it"},
+            {"id": "rumble",      "name": "Rumble",        "no_watermark": False, "notes": "Toutes qualités"},
+            {"id": "odysee",      "name": "Odysee",        "no_watermark": False, "notes": "Vidéos LBRY/Odysee"},
+            {"id": "snapchat",    "name": "Snapchat",      "no_watermark": False, "notes": "Spotlight publics"},
+            {"id": "bilibili",    "name": "Bilibili",      "no_watermark": False, "notes": "Vidéos chinoises"},
         ]
     }
 
 
 @app.get("/extract", response_model=ExtractResponse, tags=["Extraction"])
-async def extract(url: str = Query(..., description="URL de la vidéo")):
+async def extract(
+    url:     str = Query(..., description="URL de la vidéo"),
+    quality: str = Query("best", description="Qualité: best, 1080, 720, 480, 4k, audio"),
+):
     url = url.strip()
     if not (url.startswith("http://") or url.startswith("https://")):
         raise HTTPException(status_code=400, detail="URL invalide")
 
     start = time.monotonic()
     try:
-        logger.info(f"Extraction → {url}")
-        info    = await extract_video_info(url)
+        logger.info(f"Extraction [{quality}] → {url}")
+        info    = await extract_video_info(url, quality)
         elapsed = round((time.monotonic() - start) * 1000, 1)
         logger.info(f"OK [{info.platform}] '{info.title[:60]}' — {elapsed}ms")
         return ExtractResponse(success=True, data=info, duration_ms=elapsed)
@@ -918,10 +1117,80 @@ async def extract_batch(body: BatchRequest):
     )
 
 
+@app.post("/extract/playlist", response_model=PlaylistResponse, tags=["Extraction"])
+async def extract_playlist_endpoint(body: PlaylistRequest):
+    url = body.url.strip()
+    if not (url.startswith("http://") or url.startswith("https://")):
+        raise HTTPException(status_code=400, detail="URL invalide")
+
+    platform = detect_platform(url)
+    if platform not in PLAYLIST_PLATFORMS and platform != "unknown":
+        raise HTTPException(
+            status_code=422,
+            detail=f"Les playlists ne sont pas supportées pour {platform}"
+        )
+
+    try:
+        return await extract_playlist_info(url, body.limit)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        logger.error(f"Playlist error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/extract/progress/{job_id}", tags=["Extraction"])
+async def extract_with_progress(job_id: str, url: str = Query(...), quality: str = Query("best")):
+    """
+    SSE endpoint — envoie la progression de l'extraction en temps réel.
+    Utile pour les longs métrages ou vidéos > 30 min.
+    """
+    url = url.strip()
+    if not (url.startswith("http://") or url.startswith("https://")):
+        raise HTTPException(status_code=400, detail="URL invalide")
+
+    _progress_store[job_id] = {"status": "starting", "percent": 0}
+
+    async def _run_and_stream():
+        try:
+            _progress_store[job_id] = {"status": "extracting", "percent": 10}
+            yield f"data: {json.dumps(_progress_store[job_id])}\n\n"
+
+            info = await extract_video_info(url, quality)
+            _progress_store[job_id] = {
+                "status": "done",
+                "percent": 100,
+                "data": info.model_dump(),
+            }
+            yield f"data: {json.dumps({'status': 'done', 'percent': 100, 'data': info.model_dump()})}\n\n"
+        except Exception as e:
+            _progress_store[job_id] = {"status": "error", "error": str(e)}
+            yield f"data: {json.dumps({'status': 'error', 'error': str(e)})}\n\n"
+        finally:
+            # Nettoyer après 5 min
+            await asyncio.sleep(300)
+            _progress_store.pop(job_id, None)
+
+    return StreamingResponse(
+        _run_and_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
 @app.get("/detect", tags=["Utilitaires"])
 async def detect(url: str = Query(...)):
     p = detect_platform(url.strip())
-    return {"url": url, "platform": p, "supported": p in SUPPORTED_PLATFORMS}
+    return {
+        "url": url,
+        "platform": p,
+        "supported": p in SUPPORTED_PLATFORMS,
+        "supports_playlist": p in PLAYLIST_PLATFORMS,
+    }
 
 
 @app.get("/headers/{platform}", tags=["Utilitaires"])
