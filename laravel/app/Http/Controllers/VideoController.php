@@ -425,8 +425,14 @@ class VideoController extends Controller
 
     public function checkCapabilities(): JsonResponse
     {
+        try {
+            $ffmpeg = (bool) $this->getFfmpegPath();
+        } catch (\Exception) {
+            $ffmpeg = false;
+        }
+
         return response()->json([
-            'ffmpeg'   => (bool) $this->getFfmpegPath(),
+            'ffmpeg'   => $ffmpeg,
             'version'  => '3.0',
             'laravel'  => app()->version(),
         ]);

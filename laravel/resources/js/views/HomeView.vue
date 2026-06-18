@@ -30,18 +30,18 @@
     <section class="extractor">
       <div class="container">
 
-        <!-- Platform bar — spans full width above the 2-col grid -->
+        <!-- Platform grid — wraps naturally, no horizontal scroll -->
         <div class="plat-bar">
           <button
             v-for="p in platforms"
             :key="p.id"
-            :class="['plat-chip', `plat-chip--${p.id}`, { 'plat-chip--on': detectedPlatform === p.id }]"
+            :class="['plat-chip', { 'plat-chip--on': detectedPlatform === p.id }]"
             @click="detectedPlatform = p.id"
             :title="p.name"
           >
-            <component :is="platformIcon(p.id)" :size="13" />
+            <component :is="platformIcon(p.id)" :size="14" />
             <span>{{ p.name }}</span>
-            <span v-if="p.no_watermark" class="nowm-dot"></span>
+            <span v-if="p.no_watermark" class="nowm-dot" title="Sans watermark"></span>
           </button>
         </div>
 
@@ -602,26 +602,27 @@ const fmtDuration = s => {
 }
 .empty-hint p { font-size: 13px; line-height: 1.6; color: var(--text-lo); }
 
-/* Platform bar — horizontal scroll */
+/* Platform bar — wrap grid */
 .plat-bar {
-  display: flex; gap: 5px; overflow-x: auto; padding-bottom: 4px;
-  margin-bottom: 12px; scrollbar-width: none;
+  display: flex; flex-wrap: wrap; gap: 6px;
+  margin-bottom: 16px;
 }
-.plat-bar::-webkit-scrollbar { display: none; }
 .plat-chip {
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 4px 10px;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px;
   background: var(--bg-1); border: 1px solid var(--border);
-  border-radius: 20px; cursor: pointer;
-  font-size: 12px; font-weight: 500; color: var(--text-md);
-  white-space: nowrap; flex-shrink: 0;
-  transition: all 0.15s; position: relative;
+  border-radius: var(--r-sm); cursor: pointer;
+  font-size: 12.5px; font-weight: 500; color: var(--text-md);
+  transition: all 0.15s; position: relative; white-space: nowrap;
 }
-.plat-chip:hover { color: var(--text-hi); border-color: var(--border-md); }
-.plat-chip--on  { background: var(--bg-2); border-color: var(--border-hi); color: var(--text-hi); }
+.plat-chip:hover { color: var(--text-hi); border-color: var(--border-md); background: var(--bg-2); }
+.plat-chip--on  {
+  background: var(--mint-dim); border-color: rgba(27,255,164,0.3);
+  color: var(--mint);
+}
 .nowm-dot {
   width: 5px; height: 5px; border-radius: 50%; background: var(--mint);
-  box-shadow: 0 0 5px var(--mint);
+  box-shadow: 0 0 5px var(--mint); flex-shrink: 0;
 }
 
 /* Mode tabs */
