@@ -1244,21 +1244,28 @@ async def _extract_dailymotion(url: str) -> VideoInfo:
 
 def _reddit_json(url: str) -> Optional[VideoInfo]:
     """Extrait une vidéo Reddit via leur API JSON publique."""
-    # Nettoyer l'URL
     clean = re.sub(r'\?.*$', '', url.rstrip('/'))
     if not clean.endswith('.json'):
         clean += '.json'
     api_url = clean + '?raw_json=1&limit=1'
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; WaziScope/3.0; +https://waziscope.nealix.org)",
-        "Accept": "application/json",
+    _hdrs = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) "
+                      "Chrome/125.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.7",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
     }
     try:
-        html = _http_get_html(api_url, headers)
-        if not html:
-            return None
-        data = json.loads(html)
+        with httpx.Client(follow_redirects=True, timeout=15, headers=_hdrs) as c:
+            resp = c.get(api_url)
+            if resp.status_code != 200:
+                logger.debug(f"Reddit JSON {resp.status_code} for {api_url[:80]}")
+                return None
+            data = resp.json()
     except Exception as e:
         logger.debug(f"Reddit JSON parse error: {e}")
         return None
@@ -1366,6 +1373,25 @@ async def _extract_reddit(url: str) -> VideoInfo:
         if resolved and resolved != url:
             logger.info(f"Reddit /s/ resolved: {url} → {resolved[:80]}")
             url = resolved
+
+        # Si l'URL est toujours une URL /s/ (redirection bloquée), on tente
+        # le JSON sur www + old.reddit.com avant d'appeler yt-dlp
+        if re.search(r'reddit\.com/r/[^/]+/s/', url):
+            def _try_share_json(base: str) -> Optional[VideoInfo]:
+                # Essaie POST-like : /s/ID.json → Reddit redirige vers le post
+                share_json = re.sub(r'https?://(?:www\.|old\.)?reddit\.com',
+                                    base, url.rstrip('/'))
+                return _reddit_json(share_json)
+
+            for _base in ("https://old.reddit.com", "https://www.reddit.com"):
+                r = await loop.run_in_executor(executor, _try_share_json, _base)
+                if r:
+                    return r
+
+            raise ValueError(
+                "Ce lien de partage Reddit (/s/) ne peut pas être résolu depuis ce serveur. "
+                "Copiez l'URL complète du post (reddit.com/r/.../comments/...) et réessayez."
+            )
 
     # ── Cas 3 : yt-dlp ────────────────────────────────────────────────────────
     opts = get_ydl_opts("reddit")
