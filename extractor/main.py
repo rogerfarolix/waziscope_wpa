@@ -1323,33 +1323,44 @@ async def _extract_reddit(url: str) -> VideoInfo:
             required_headers={"User-Agent": UA_DESKTOP, "Referer": "https://www.reddit.com/"},
         )
 
-    # ── Cas 2 : URL courte /s/ → résoudre via httpx ──────────────────────────
+    # ── Cas 2 : URL courte /s/ → extraire l'URL réelle ───────────────────────
     if re.search(r'reddit\.com/r/[^/]+/s/', url):
         def _resolve_reddit_share(share_url: str) -> str:
+            _hdrs = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                              "AppleWebKit/537.36 (KHTML, like Gecko) "
+                              "Chrome/125.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.7",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Upgrade-Insecure-Requests": "1",
+            }
+            # Étape 1 : capturer le Location sans suivre la redirection
             try:
-                with httpx.Client(
-                    follow_redirects=True,
-                    timeout=12,
-                    headers={
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                                      "AppleWebKit/537.36 (KHTML, like Gecko) "
-                                      "Chrome/125.0.0.0 Safari/537.36",
-                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                        "Accept-Language": "en-US,en;q=0.7",
-                        "Accept-Encoding": "gzip, deflate, br",
-                        "Sec-Fetch-Dest": "document",
-                        "Sec-Fetch-Mode": "navigate",
-                        "Sec-Fetch-Site": "none",
-                        "Upgrade-Insecure-Requests": "1",
-                        "DNT": "1",
-                    },
-                ) as client:
-                    resp = client.get(share_url)
-                    final = str(resp.url)
+                with httpx.Client(follow_redirects=False, timeout=10, headers=_hdrs) as c:
+                    r = c.get(share_url)
+                    loc = r.headers.get("location", "")
+                    if loc and "/comments/" in loc:
+                        return loc if loc.startswith("http") else "https://www.reddit.com" + loc
+                    # Chercher dans le HTML (page de login / error)
+                    m = re.search(
+                        r'https?://(?:www\.)?reddit\.com/r/[^/]+/comments/[^"\'>\s]+', r.text
+                    )
+                    if m:
+                        return m.group(0)
+            except Exception as e:
+                logger.debug(f"Reddit /s/ no-redirect failed: {e}")
+            # Étape 2 : suivre la redirection complète
+            try:
+                with httpx.Client(follow_redirects=True, timeout=12, headers=_hdrs) as c:
+                    r = c.get(share_url)
+                    final = str(r.url)
                     if "reddit.com" in final and "/comments/" in final:
                         return final
             except Exception as e:
-                logger.debug(f"Reddit /s/ httpx resolve failed: {e}")
+                logger.debug(f"Reddit /s/ follow-redirect failed: {e}")
             return share_url
         resolved = await loop.run_in_executor(executor, _resolve_reddit_share, url)
         if resolved and resolved != url:
