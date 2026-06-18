@@ -427,14 +427,14 @@ class VideoController extends Controller
     {
         try {
             $ffmpeg = (bool) $this->getFfmpegPath();
-        } catch (\Exception) {
+        } catch (\Throwable) {
             $ffmpeg = false;
         }
 
         return response()->json([
-            'ffmpeg'   => $ffmpeg,
-            'version'  => '3.0',
-            'laravel'  => app()->version(),
+            'ffmpeg'  => $ffmpeg,
+            'version' => '3.0',
+            'laravel' => app()->version(),
         ]);
     }
 
@@ -458,9 +458,15 @@ class VideoController extends Controller
             }
         }
 
-        // Fallback which
-        $which = trim(shell_exec('which ffmpeg 2>/dev/null') ?? '');
-        return $which ?: null;
+        // Fallback which — shell_exec peut être désactivé
+        try {
+            if (function_exists('shell_exec') && !in_array('shell_exec', array_map('trim', explode(',', ini_get('disable_functions'))))) {
+                $which = trim(shell_exec('which ffmpeg 2>/dev/null') ?? '');
+                return $which ?: null;
+            }
+        } catch (\Throwable) {}
+
+        return null;
     }
 
     /**
