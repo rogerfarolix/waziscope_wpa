@@ -55,16 +55,18 @@ log "Python: OK"
 # ── 6. Supervisor — restart extractor ─────────────────────────────────────────
 log "Supervisor: restart extractor..."
 if command -v supervisorctl &>/dev/null; then
-  supervisorctl restart waziscope-extractor || supervisorctl start waziscope-extractor
+  sudo supervisorctl restart waziscope-extractor 2>/dev/null \
+    || sudo supervisorctl start waziscope-extractor 2>/dev/null \
+    || log "Supervisor: permission manquante — voir /etc/sudoers.d/waziscope-deploy"
   log "Supervisor: OK"
 else
   log "Supervisor: non trouvé — extractor non redémarré"
 fi
 
 # ── 7. Optionnel — reload PHP-FPM ─────────────────────────────────────────────
-if command -v php-fpm8.3 &>/dev/null; then
-  sudo service php8.3-fpm reload 2>/dev/null && log "PHP-FPM: reloaded" || true
-elif command -v php-fpm &>/dev/null; then
+if sudo service php8.3-fpm status &>/dev/null; then
+  sudo service php8.3-fpm reload 2>/dev/null && log "PHP-FPM 8.3: reloaded" || true
+elif sudo service php-fpm status &>/dev/null; then
   sudo service php-fpm reload 2>/dev/null && log "PHP-FPM: reloaded" || true
 fi
 
