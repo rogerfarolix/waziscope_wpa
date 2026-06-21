@@ -73,7 +73,7 @@
 
         <!-- Stats bar -->
         <div class="stats-bar">
-          <span><strong>16</strong> plateformes</span>
+          <span><strong>14</strong> plateformes</span>
           <span class="sep">·</span>
           <span><strong>4K</strong> max</span>
           <span class="sep">·</span>
@@ -81,6 +81,12 @@
           <span class="sep">·</span>
           <span><strong>MP3</strong> audio</span>
         </div>
+
+        <!-- Guide iOS link -->
+        <router-link to="/guide" class="ios-hint">
+          <Smartphone :size="12"/> Utiliser depuis TikTok/Pinterest sans copier ?
+          <span class="ios-hint__cta">Voir le guide →</span>
+        </router-link>
       </div>
     </section>
 
@@ -267,7 +273,7 @@ import axios from 'axios'
 import {
   DownloadCloud, Link2, X, Loader2, Clock, Music, Layers, ChevronDown,
   Download, AlertCircle, ShieldCheck, ShieldOff, UserRound, Eye, Heart,
-  Zap, Clipboard, Film, List,
+  Zap, Clipboard, Film, List, Smartphone,
   PlayCircle, Bookmark, Users, Camera, Briefcase, Bird,
   Video, Tv2, Radio, PlaySquare, Globe, Rss, Music2,
 } from 'lucide-vue-next'
@@ -334,6 +340,16 @@ onMounted(async () => {
   const shared = route.query.url || route.query.shared
   if (shared) { inputUrl.value = decodeURIComponent(String(shared)); doAction(); return }
   window.addEventListener('wzs:share', e => { inputUrl.value = e.detail.url; doAction() })
+
+  // Détection auto clipboard — auto-remplit si URL copiée
+  try {
+    const text = await navigator.clipboard.readText()
+    if (text?.trim().match(/^https?:\/\/.{6,}/) && !inputUrl.value) {
+      inputUrl.value = text.trim()
+      notify({ message: 'URL depuis presse-papier collée', type: 'info' })
+    }
+  } catch {}
+
   try {
     const cap = await axios.get('/api/v1/capabilities').catch(() => null)
     if (cap?.data?.ffmpeg !== undefined) ffmpeg.value = cap.data.ffmpeg
@@ -851,18 +867,83 @@ const fmt    = s => {
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform:rotate(360deg); } }
 
-/* ══ RESPONSIVE ═══════════════════════════════════════════════════════════════ */
+/* ── iOS Guide hint ───────────────────────────────────────────────────────── */
+.ios-hint {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-top: 14px; font-size: 12px; color: var(--text-lo);
+  text-decoration: none; transition: color .15s;
+}
+.ios-hint:hover { color: var(--text-md); }
+.ios-hint__cta { color: var(--mint); font-weight: 600; }
+
+/* ══ RESPONSIVE — Mobile first ════════════════════════════════════════════════ */
 @media (max-width: 860px) {
   .result-wrap { grid-template-columns: 1fr; }
   .res-thumb img { min-height: 200px; max-height: 240px; }
   .feats-grid { grid-template-columns: repeat(2,1fr); }
 }
-@media (max-width: 560px) {
-  .hero { min-height: 70vh; }
-  .search-opts { flex-wrap: wrap; }
-  .go-btn { width:100%; justify-content:center; }
-  .feats-grid { grid-template-columns: 1fr; }
-  .res-sec-row { flex-direction:column; }
-  .btn-sec { flex:unset; width:100%; }
+
+@media (max-width: 640px) {
+  /* Hero compact */
+  .hero {
+    min-height: 0;
+    padding: 36px 16px 28px;
+  }
+  .hero__title { font-size: clamp(36px, 10vw, 52px); letter-spacing: -1.5px; }
+  .hero__desc  { font-size: 13px; margin-bottom: 24px; }
+  .hero__eyebrow { margin-bottom: 14px; font-size: 11px; }
+
+  /* Search block : full width, touch-friendly */
+  .search-block { padding: 14px 12px 12px; border-radius: 16px; }
+  .search-input { padding: 14px 12px; min-height: 52px; }
+  .search-input input { font-size: 15px; }
+  .si-clear, .si-paste { padding: 6px; }
+  .mpill { padding: 7px 14px; font-size: 13px; }
+
+  /* Options + bouton */
+  .search-opts { gap: 8px; }
+  .go-btn {
+    width: 100%; justify-content: center;
+    padding: 13px; font-size: 15px; border-radius: 12px;
+    min-height: 50px;
+  }
+  .ochip { padding: 6px 12px; font-size: 13px; }
+
+  /* Stats bar */
+  .stats-bar { flex-wrap: wrap; gap: 6px; font-size: 11.5px; }
+  .sep { display: none; }
+
+  /* Résultats */
+  .results-section { padding: 0 0 24px; }
+  .result-wrap { border-radius: 16px; }
+  .res-thumb img { min-height: 180px; max-height: 220px; }
+  .res-info { padding: 16px; }
+  .res-title { font-size: 14px; }
+  .btn-dl {
+    padding: 14px;
+    font-size: 15px;
+    border-radius: 10px;
+    justify-content: center;
+  }
+  .res-sec-row { flex-direction: column; gap: 8px; }
+  .btn-sec { flex: unset; width: 100%; justify-content: center; padding: 11px; }
+
+  /* Playlist */
+  .pl-head { flex-direction: column; align-items: stretch; gap: 12px; }
+  .pl-head .btn-dl--sm { width: 100%; justify-content: center; }
+
+  /* Plateformes */
+  .plats-section { padding: 40px 0; }
+  .plat-card { min-width: 130px; padding: 14px 12px; }
+
+  /* Features */
+  .feats-section { padding: 40px 0 60px; }
+  .feats-grid { grid-template-columns: 1fr; gap: 10px; }
+  .feat-card { padding: 18px 16px; }
+}
+
+@media (max-width: 400px) {
+  .hero__title { font-size: 32px; }
+  .plat-card { min-width: 116px; }
 }
 </style>

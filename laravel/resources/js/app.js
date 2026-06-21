@@ -13,6 +13,7 @@ import App                                 from './App.vue'
 import HomeView                            from './views/HomeView.vue'
 import ShareView                           from './views/ShareView.vue'
 import HistoryView                         from './views/HistoryView.vue'
+import IosGuideView                        from './views/IosGuideView.vue'
 import axios                               from 'axios'
 
 // ─── Axios defaults ───────────────────────────────────────────────────────────
@@ -33,9 +34,10 @@ axios.interceptors.response.use(
 const router = createRouter({
     history: createWebHistory(),
     routes: [
-        { path: '/',        component: HomeView,    name: 'home'    },
-        { path: '/share',   component: ShareView,   name: 'share'   },
-        { path: '/history', component: HistoryView, name: 'history' },
+        { path: '/',        component: HomeView,     name: 'home'    },
+        { path: '/share',   component: ShareView,    name: 'share'   },
+        { path: '/history', component: HistoryView,  name: 'history' },
+        { path: '/guide',   component: IosGuideView, name: 'guide'   },
         // Fallback → Home
         { path: '/:pathMatch(.*)*', redirect: '/' },
     ],

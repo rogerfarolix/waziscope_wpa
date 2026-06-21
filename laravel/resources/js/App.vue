@@ -42,6 +42,23 @@
       </router-view>
     </main>
 
+    <!-- ── Bottom Nav (mobile) ──────────────────────────────────────────────── -->
+    <nav class="bottom-nav" aria-label="Navigation principale">
+      <router-link to="/" class="bnav__item" exact-active-class="bnav__item--on">
+        <Home :size="21"/>
+        <span>Accueil</span>
+      </router-link>
+      <router-link to="/guide" class="bnav__item" active-class="bnav__item--on">
+        <Smartphone :size="21"/>
+        <span>Guide</span>
+      </router-link>
+      <router-link to="/history" class="bnav__item" active-class="bnav__item--on">
+        <Clock :size="21"/>
+        <span>Historique</span>
+        <span v-if="historyCount > 0" class="bnav__badge">{{ historyCount }}</span>
+      </router-link>
+    </nav>
+
     <!-- ── Footer ──────────────────────────────────────────────────────────── -->
     <footer class="app-footer">
       <div class="app-footer__inner">
@@ -85,7 +102,7 @@ import { ref, computed, onMounted, provide } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   DownloadCloud, Home, Clock, CheckCircle2, AlertCircle,
-  Info, X, Smartphone
+  Info, X, Smartphone, HelpCircle
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -452,6 +469,48 @@ main { margin-top: var(--nav-h); min-height: calc(100dvh - var(--nav-h)); }
 /* Spinner */
 @keyframes spin { to { transform: rotate(360deg); } }
 .spin { animation: spin 0.85s linear infinite; }
+
+/* ── Bottom Nav ────────────────────────────────────────────────────────────── */
+.bottom-nav {
+  display: none; /* desktop: caché */
+}
+@media (max-width: 640px) {
+  .bottom-nav {
+    display: flex;
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    z-index: 200;
+    height: 60px;
+    background: rgba(8,11,15,0.96);
+    border-top: 1px solid var(--border);
+    backdrop-filter: blur(16px) saturate(1.4);
+    padding: 0 8px;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  /* Sur mobile, cacher les liens de la top nav */
+  .nav__links { display: none; }
+  /* Ajouter de l'espace en bas pour ne pas cacher le contenu */
+  main { padding-bottom: calc(60px + env(safe-area-inset-bottom)); }
+  .app-footer { margin-bottom: calc(60px + env(safe-area-inset-bottom)); }
+}
+.bnav__item {
+  flex: 1;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 3px;
+  color: var(--text-lo);
+  font-size: 10px; font-weight: 600;
+  position: relative;
+  transition: color .18s var(--ease);
+  text-decoration: none;
+}
+.bnav__item--on { color: var(--mint); }
+.bnav__item:hover { color: var(--text-md); }
+.bnav__badge {
+  position: absolute; top: 4px; right: calc(50% - 18px);
+  background: var(--mint); color: #000;
+  font-size: 9px; font-weight: 700;
+  padding: 1px 4px; border-radius: 20px; min-width: 14px; text-align: center;
+}
 
 /* ── Footer ────────────────────────────────────────────────────────────────── */
 .app-footer {
