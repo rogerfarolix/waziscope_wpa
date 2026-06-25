@@ -1233,9 +1233,31 @@ async def _extract_dailymotion(url: str) -> VideoInfo:
 
 # ─── Extraction principale ────────────────────────────────────────────────────
 
+def _strip_youtube_list(url: str) -> str:
+    """Remove ?list= from YouTube URLs that aren't real playlists (WL, RD mixes, etc.)."""
+    import urllib.parse as _up
+    try:
+        parsed = _up.urlparse(url)
+        qs = _up.parse_qs(parsed.query, keep_blank_values=True)
+        list_id = (qs.get("list") or [""])[0]
+        # Keep real playlists (PL*, UU*, FL*); strip WL and auto-mixes (RD*)
+        if list_id and (list_id == "WL" or list_id.startswith("RD")):
+            qs.pop("list", None)
+            qs.pop("index", None)
+            qs.pop("start_radio", None)
+            new_query = _up.urlencode({k: v[0] for k, v in qs.items()})
+            return _up.urlunparse(parsed._replace(query=new_query))
+    except Exception:
+        pass
+    return url
+
+
 async def extract_video_info(url: str, quality: str = "best") -> VideoInfo:
     url      = url.strip()
     platform = detect_platform(url)
+
+    if platform == "youtube":
+        url = _strip_youtube_list(url)
 
     if platform == "unknown":
         raise ValueError(

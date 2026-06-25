@@ -370,7 +370,27 @@ const paste = async () => {
 }
 
 const detectMode = url => {
-  if (url.toLowerCase().includes('list=')) mode.value = 'playlist'
+  // Switch to playlist mode only for real playlists (PLxxx, UU, FL, RD…)
+  // WL (Watch Later) is private → needs auth → don't auto-switch
+  const m = url.match(/[?&]list=([^&]+)/i)
+  if (m) {
+    const listId = m[1]
+    if (listId !== 'WL' && !listId.startsWith('RD')) mode.value = 'playlist'
+  }
+}
+
+const cleanUrl = url => {
+  // When in single-video mode, strip list= to avoid playlist detection by yt-dlp
+  if (mode.value !== 'playlist') {
+    try {
+      const u = new URL(url)
+      u.searchParams.delete('list')
+      u.searchParams.delete('index')
+      u.searchParams.delete('start_radio')
+      return u.toString()
+    } catch { return url }
+  }
+  return url
 }
 
 const doAction = () => {
@@ -379,7 +399,7 @@ const doAction = () => {
 }
 
 const doExtract = async () => {
-  const url = inputUrl.value.trim(); if (!url) return
+  const url = cleanUrl(inputUrl.value.trim()); if (!url) return
   loading.value = true; result.value = null; playlist.value = null
   errorMsg.value = null; showFmts.value = false
   try {
