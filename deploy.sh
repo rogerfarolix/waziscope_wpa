@@ -70,6 +70,11 @@ if [ "$REQ_HASH" != "$SAVED_HASH" ]; then
 else
   log "Python: deps inchangés (skip)"
 fi
+
+# yt-dlp se périme en quelques semaines (YouTube change son API) — toujours upgrader
+log "Python: mise à jour yt-dlp..."
+"$EXTRACTOR/venv/bin/pip" install -q --upgrade yt-dlp
+log "Python: yt-dlp $("$EXTRACTOR/venv/bin/yt-dlp" --version)"
 log "Python: OK"
 
 # ── 6. Supervisor — restart extractor ─────────────────────────────────────────
