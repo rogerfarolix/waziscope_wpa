@@ -39,6 +39,23 @@ executor = ThreadPoolExecutor(max_workers=6)
 # Stockage en mémoire des progressions (jobId → état)
 _progress_store: dict[str, dict] = {}
 
+# Cookies YouTube — chemin relatif au répertoire du script.
+# Présence optionnelle : si absent, yt-dlp fonctionne sans (vidéos publiques).
+import os as _os
+_COOKIES_PATH: str | None = None
+for _candidate in [
+    _os.path.join(_os.path.dirname(__file__), "youtube_cookies.txt"),
+    _os.path.join(_os.path.dirname(__file__), "cookies.txt"),
+]:
+    if _os.path.isfile(_candidate):
+        _COOKIES_PATH = _candidate
+        break
+
+if _COOKIES_PATH:
+    logger.info(f"Cookies YouTube chargés : {_COOKIES_PATH}")
+else:
+    logger.warning("Pas de fichier cookies YouTube — les vidéos restreintes échoueront.")
+
 # ─── App ──────────────────────────────────────────────────────────────────────
 
 app = FastAPI(
@@ -303,14 +320,15 @@ _PLATFORM_OVERRIDES: dict[str, dict] = {
         "merge_output_format": "mp4",
         "__extra_headers": {"Referer": "https://www.youtube.com/"},
         # yt-dlp >= 2026.08 : tv_embedded/web_embedded dépréciés.
-        # ios + android_vr ne nécessitent pas de PO token.
-        # web en fallback avec js_runtimes node pour le PO token.
+        # ios + android_vr + web avec solver EJS + cookies = zéro bot-detect.
         "extractor_args": {
             "youtube": {
                 "player_client": ["ios", "android_vr", "web"],
             }
         },
         "js_runtimes": ["node:/usr/bin/node"],
+        "compat_opts": set(),  # reset des compat flags hérités
+        "__youtube_cookies": True,      # sentinelle : get_ydl_opts injecte cookies + EJS
     },
     "pinterest": {
         "format": "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio/best",
@@ -394,11 +412,16 @@ def get_ydl_opts(platform: str, quality: str = "best") -> dict:
         "format": _DEFAULT_FORMAT,
     }
 
-    overrides = _PLATFORM_OVERRIDES.get(platform, {})
+    overrides = {**_PLATFORM_OVERRIDES.get(platform, {})}  # copie pour ne pas muter le dict global
 
     # Résoudre le format qualité si la plateforme le demande
     if overrides.pop("__yt_quality", False):
         base["format"] = _YT_FORMATS.get(quality, _YT_FORMATS["best"])
+
+    # Injecter cookies + EJS solver pour YouTube si disponibles
+    if overrides.pop("__youtube_cookies", False) and _COOKIES_PATH:
+        base["cookiefile"] = _COOKIES_PATH
+        base["extractor_components"] = ["ejs:github"]
 
     # Fusionner User-Agent et headers supplémentaires
     ua = overrides.pop("__ua", None)
@@ -1308,7 +1331,7 @@ async def extract_playlist_info(url: str, limit: int = 20) -> PlaylistResponse:
     platform = detect_platform(url)
     loop     = asyncio.get_running_loop()
 
-    flat_opts = {
+    flat_opts: dict = {
         "quiet": True,
         "no_warnings": True,
         "extract_flat": True,
@@ -1321,6 +1344,9 @@ async def extract_playlist_info(url: str, limit: int = 20) -> PlaylistResponse:
             }
         },
     }
+    if _COOKIES_PATH:
+        flat_opts["cookiefile"] = _COOKIES_PATH
+        flat_opts["extractor_components"] = ["ejs:github"]
 
     def _get_flat():
         with yt_dlp.YoutubeDL(flat_opts) as ydl:
