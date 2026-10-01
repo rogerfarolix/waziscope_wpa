@@ -326,8 +326,8 @@ _PLATFORM_OVERRIDES: dict[str, dict] = {
                 "player_client": ["ios", "android_vr", "web"],
             }
         },
-        "js_runtimes": ["node:/usr/bin/node"],
-        "compat_opts": set(),  # reset des compat flags hérités
+        # Python API : dict {runtime: {path?}} — différent de la CLI --js-runtimes
+        "js_runtimes": {"node": {"path": "/usr/bin/node"}},
         "__youtube_cookies": True,      # sentinelle : get_ydl_opts injecte cookies + EJS
     },
     "pinterest": {
@@ -1337,7 +1337,7 @@ async def extract_playlist_info(url: str, limit: int = 20) -> PlaylistResponse:
         "extract_flat": True,
         "socket_timeout": 30,
         "playlistend": limit,
-        "js_runtimes": ["node:/usr/bin/node"],
+        "js_runtimes": {"node": {"path": "/usr/bin/node"}},
         "extractor_args": {
             "youtube": {
                 "player_client": ["ios", "android_vr", "web"],
