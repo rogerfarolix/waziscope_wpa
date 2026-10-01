@@ -12,6 +12,16 @@ log "=== WaziScope Deploy START ==="
 
 # ── 1. Git pull ───────────────────────────────────────────────────────────────
 log "Git: pull origin main..."
+
+# Vérifier les changements non committés avant reset --hard
+DIRTY="$(git -C "$ROOT" status --porcelain 2>/dev/null)"
+if [ -n "$DIRTY" ]; then
+  log "AVERTISSEMENT: des changements locaux non committés vont être perdus :"
+  git -C "$ROOT" status --short | tee -a "$LOG"
+  log "Stash automatique..."
+  git -C "$ROOT" stash push -u -m "deploy-stash-$(date +%Y%m%d-%H%M%S)" || true
+fi
+
 git -C "$ROOT" reset --hard HEAD
 git -C "$ROOT" pull origin main
 log "Git: OK ($(git -C "$ROOT" rev-parse --short HEAD))"
@@ -48,8 +58,18 @@ if [ ! -f "$EXTRACTOR/venv/bin/activate" ]; then
   log "Python: création venv..."
   python3 -m venv "$EXTRACTOR/venv"
 fi
-"$EXTRACTOR/venv/bin/pip" install -q --upgrade pip
-"$EXTRACTOR/venv/bin/pip" install -q -r "$EXTRACTOR/requirements.txt"
+REQ_HASH_FILE="$EXTRACTOR/venv/.req_hash"
+REQ_HASH="$(md5sum "$EXTRACTOR/requirements.txt" 2>/dev/null | cut -d' ' -f1)"
+SAVED_HASH="$(cat "$REQ_HASH_FILE" 2>/dev/null || echo '')"
+
+if [ "$REQ_HASH" != "$SAVED_HASH" ]; then
+  "$EXTRACTOR/venv/bin/pip" install -q --upgrade pip
+  "$EXTRACTOR/venv/bin/pip" install -q -r "$EXTRACTOR/requirements.txt"
+  echo "$REQ_HASH" > "$REQ_HASH_FILE"
+  log "Python: deps mis à jour"
+else
+  log "Python: deps inchangés (skip)"
+fi
 log "Python: OK"
 
 # ── 6. Supervisor — restart extractor ─────────────────────────────────────────

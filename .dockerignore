@@ -1,0 +1,44 @@
+# Git
+.git
+.gitignore
+
+# Docs
+README.md
+*.md
+
+# Logs
+*.log
+deploy.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea
+.vscode
+*.swp
+
+# Laravel — dev deps & generated
+laravel/node_modules
+laravel/vendor
+laravel/public/build
+laravel/public/hot
+laravel/storage/framework/cache
+laravel/storage/framework/sessions
+laravel/storage/framework/views
+laravel/storage/logs
+laravel/bootstrap/cache
+laravel/.env
+laravel/.env.*
+laravel/database/*.sqlite
+laravel/.phpunit.result.cache
+
+# Python — venv & caches
+extractor/venv
+extractor/.venv
+extractor/__pycache__
+extractor/*.pyc
+extractor/.pytest_cache
+extractor/.mypy_cache
+extractor/.ruff_cache

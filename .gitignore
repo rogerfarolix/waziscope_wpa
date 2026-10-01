@@ -18,6 +18,10 @@
 /laravel/.phpunit.result.cache
 /laravel/phpunit.xml
 
+# ─── Base de données SQLite (générée localement) ─────────────────────────────
+/laravel/database/database.sqlite
+/laravel/database/*.sqlite
+
 # ─── Python / FastAPI ─────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
@@ -27,6 +31,7 @@ __pycache__/
 /extractor/.env
 /extractor/venv/
 /extractor/.venv/
+/extractor/venv/.req_hash
 env/
 venv/
 .venv/

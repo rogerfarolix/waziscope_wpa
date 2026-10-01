@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hors ligne — WaziScope</title>
+  <style>
+    :root { --bg: #080b0f; --fg: #eef2f8; --mint: #1bffa4; --fg2: #7a8499; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg); color: var(--fg);
+      font-family: system-ui, -apple-system, sans-serif;
+      min-height: 100dvh;
+      display: flex; align-items: center; justify-content: center;
+      padding: 24px; text-align: center;
+    }
+    .card {
+      max-width: 380px;
+      display: flex; flex-direction: column; align-items: center; gap: 16px;
+    }
+    .icon {
+      width: 64px; height: 64px;
+      background: rgba(27,255,164,0.1);
+      border-radius: 16px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    h1 { font-size: 1.4rem; font-weight: 700; }
+    p  { color: var(--fg2); font-size: 0.9rem; line-height: 1.6; }
+    a  {
+      display: inline-flex; align-items: center; gap: 8px;
+      margin-top: 8px;
+      padding: 11px 24px;
+      background: var(--mint); color: #000;
+      border-radius: 10px; font-weight: 600; font-size: 0.9rem;
+      text-decoration: none;
+    }
+    a:hover { opacity: 0.88; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#1bffa4" stroke-width="1.8">
+        <path d="M1 6l5 5m0 0l5-5M6 11V3"/>
+        <path d="M18.364 5.636A9 9 0 0 1 21 12a9 9 0 1 1-9-9" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <h1>Vous êtes hors ligne</h1>
+    <p>WaziScope nécessite une connexion internet pour extraire les vidéos. Vérifiez votre réseau et réessayez.</p>
+    <a href="/" onclick="location.reload(); return false;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-5"/>
+      </svg>
+      Réessayer
+    </a>
+  </div>
+</body>
+</html>

@@ -65,14 +65,6 @@ if ('serviceWorker' in navigator) {
         }
     })
 
-    // Écouter les messages du SW (Share Target)
-    navigator.serviceWorker.addEventListener('message', (event) => {
-        if (event.data?.type === 'SHARE_TARGET') {
-            window.dispatchEvent(
-                new CustomEvent('wzs:share', { detail: { url: event.data.url } })
-            )
-        }
-    })
 }
 
 // ─── App ──────────────────────────────────────────────────────────────────────

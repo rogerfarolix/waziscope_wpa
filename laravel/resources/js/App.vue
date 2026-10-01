@@ -98,7 +98,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, provide } from 'vue'
+import { ref, onMounted, provide } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   DownloadCloud, Home, Clock, CheckCircle2, AlertCircle,
@@ -126,35 +126,41 @@ const showToast = ({ message, type = 'info' }) => {
 provide('notify', showToast)
 
 // ─── Historique count ─────────────────────────────────────────────────────────
-const historyCount = computed(() => {
-  try { return JSON.parse(localStorage.getItem('wzs_history') || '[]').length } catch { return 0 }
-})
+const historyCount = ref(0)
+
+function refreshHistoryCount() {
+  try { historyCount.value = JSON.parse(localStorage.getItem('wzs_history') || '[]').length }
+  catch { historyCount.value = 0 }
+}
 
 // ─── PWA Install ─────────────────────────────────────────────────────────────
 const deferredPrompt = ref(null)
 const showInstall    = ref(false)
 
 onMounted(() => {
+  refreshHistoryCount()
+
+  // Mise à jour du compteur : changements cross-onglet (storage event)
+  window.addEventListener('storage', (e) => {
+    if (e.key === 'wzs_history') refreshHistoryCount()
+  })
+  // Mise à jour du compteur : changements dans le même onglet
+  window.addEventListener('wzs:history-change', refreshHistoryCount)
+
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches
   const dismissed    = localStorage.getItem('wzs_install_dismissed')
-  if (isStandalone || dismissed) return
+  if (!isStandalone && !dismissed) {
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault()
+      deferredPrompt.value = e
+      setTimeout(() => { showInstall.value = true }, 2500)
+    })
+  }
 
-  window.addEventListener('beforeinstallprompt', (e) => {
-    e.preventDefault()
-    deferredPrompt.value = e
-    setTimeout(() => { showInstall.value = true }, 2500)
-  })
-
-  // Share Target via query param
+  // Share Target via query param (redirect depuis SW)
   const params    = new URLSearchParams(window.location.search)
   const sharedUrl = params.get('shared')
   if (sharedUrl) router.push({ name: 'home', query: { url: sharedUrl } })
-
-  navigator.serviceWorker?.addEventListener('message', (e) => {
-    if (e.data?.type === 'SHARE_TARGET') {
-      window.dispatchEvent(new CustomEvent('wzs:share', { detail: { url: e.data.url } }))
-    }
-  })
 })
 
 const installPWA = async () => {

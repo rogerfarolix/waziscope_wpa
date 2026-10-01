@@ -8,18 +8,26 @@
 const CACHE_NAME    = 'wzs-v2'
 const OFFLINE_URL   = '/offline.html'
 
-const PRECACHE_URLS = [
-    '/',
-    '/manifest.json',
-    '/offline.html',
-]
+// URLs indispensables : si l'une échoue, l'install échoue aussi.
+const PRECACHE_REQUIRED = ['/', '/manifest.json']
+
+// URLs optionnelles : mises en cache si disponibles, sans bloquer l'install.
+const PRECACHE_OPTIONAL = ['/offline.html']
 
 // ─── Install ──────────────────────────────────────────────────────────────────
 self.addEventListener('install', (e) => {
     e.waitUntil(
-        caches.open(CACHE_NAME).then((c) => c.addAll(PRECACHE_URLS))
+        caches.open(CACHE_NAME).then(async (cache) => {
+            // Les ressources obligatoires doivent réussir
+            await cache.addAll(PRECACHE_REQUIRED)
+            // Les optionnelles sont ignorées silencieusement si absentes
+            await Promise.allSettled(
+                PRECACHE_OPTIONAL.map((url) =>
+                    fetch(url).then((r) => r.ok ? cache.put(url, r) : null).catch(() => null)
+                )
+            )
+        })
     )
-    // Forcer l'activation immédiate (pas besoin de fermer l'onglet)
     self.skipWaiting()
 })
 

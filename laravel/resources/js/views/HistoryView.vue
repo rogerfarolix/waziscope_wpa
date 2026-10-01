@@ -202,7 +202,11 @@ const platformColor = (id) => ({
   odysee: '#e04040',      snapchat: '#f5d020',   bilibili: '#fb7299',
 }[id] || '#3a4155')
 
-const clearAll = () => { items.value = []; localStorage.removeItem('wzs_history') }
+const clearAll = () => {
+  items.value = []
+  localStorage.removeItem('wzs_history')
+  window.dispatchEvent(new CustomEvent('wzs:history-change'))
+}
 </script>
 
 <style scoped>

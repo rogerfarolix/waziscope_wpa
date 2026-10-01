@@ -430,7 +430,7 @@ const dlAll = () => {
       const a = document.createElement('a')
       a.href = item.data.proxy_download_url || dlUrl(item.data.no_watermark_url || item.data.best_url, item.data.title)
       a.download = safe(item.data.title) + '.mp4'; a.click(); onDl(item.data)
-    }, idx * 800)
+    }, idx * 100)
   })
 }
 
@@ -447,6 +447,7 @@ const onDl = v => {
     const h = JSON.parse(localStorage.getItem('wzs_history') || '[]')
     h.unshift({ id: Date.now(), title: v.title, thumbnail: v.thumbnail, platform: v.platform, url: v.best_url, date: new Date().toISOString() })
     localStorage.setItem('wzs_history', JSON.stringify(h.slice(0, 100)))
+    window.dispatchEvent(new CustomEvent('wzs:history-change'))
   } catch {}
 }
 

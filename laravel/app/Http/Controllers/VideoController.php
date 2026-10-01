@@ -13,7 +13,7 @@ class VideoController extends Controller
 {
     private string $extractorUrl;
 
-    private const CACHE_TTL          = 600;   // 10 min
+    private const CACHE_TTL          = 90;    // 90s — URLs CDN TikTok/FB/IG expirent en 2-5min
     private const EXTRACT_TIMEOUT    = 90;    // long videos need more time
     private const PLAYLIST_TIMEOUT   = 120;
     private const FAST_TIMEOUT       = 5;
@@ -22,7 +22,7 @@ class VideoController extends Controller
         'tiktokcdn.com', 'tiktokv.com', 'tiktokcdn-us.com',
         'tiktokcdn-eu.com', 'byteoversea.com', 'tiktok.com',
         'musical.ly', 'p16-sign.tiktokcdn-us.com',
-        'pinimg.com', 'pinterest.com',
+        'pinimg.com', 'v1.pinimg.com', 'pinterest.com',
         'fbcdn.net', 'facebook.com', 'fbsbx.com',
         'cdninstagram.com', 'instagram.com',
         'googlevideo.com', 'youtube.com', 'ytimg.com',
@@ -31,47 +31,90 @@ class VideoController extends Controller
         'akamaihd.net', 'cloudfront.net', 'akamai.net',
         'redd.it', 'reddit.com', 'redditmedia.com', 'reddituploads.com',
         'packaged-media.redd.it', 'v.redd.it',
-        'pinimg.com', 'v1.pinimg.com',
         'dailymotioncdn.com', 'dailymotion.com',
         'vimeocdn.com', 'vimeo.com',
         'twitch.tv', 'jtvnw.net',
+        'rumble.com', 'sp.rmbl.ws',
+        'odysee.com', 'snapchat.com', 'scdn.co',
+        'bilibili.com', 'bilivideo.com',
     ];
+
+    private const UA_DESKTOP = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+    private const UA_ANDROID = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.6478.72 Mobile Safari/537.36';
+    private const UA_MOBILE  = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
 
     private const PLATFORM_DOWNLOAD_HEADERS = [
         'tiktok' => [
-            'User-Agent' => 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.82 Mobile Safari/537.36',
-            'Referer'    => 'https://www.tiktok.com/',
-            'Accept'     => 'video/mp4,video/*;q=0.9,*/*;q=0.8',
+            'User-Agent'      => self::UA_ANDROID,
+            'Referer'         => 'https://www.tiktok.com/',
+            'Accept'          => 'video/mp4,video/*;q=0.9,*/*;q=0.8',
             'Accept-Language' => 'fr-FR,fr;q=0.9,en;q=0.7',
         ],
         'youtube' => [
-            'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'User-Agent' => self::UA_DESKTOP,
             'Referer'    => 'https://www.youtube.com/',
             'Accept'     => 'video/mp4,video/*;q=0.9,*/*;q=0.8',
         ],
         'pinterest' => [
-            'User-Agent' => 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
+            'User-Agent' => self::UA_MOBILE,
             'Referer'    => 'https://www.pinterest.com/',
             'Accept'     => 'video/mp4,video/*;q=0.9,*/*;q=0.8',
         ],
         'facebook' => [
-            'User-Agent' => 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.82 Mobile Safari/537.36',
-            'Referer'    => 'https://www.facebook.com/',
-            'Accept'     => 'video/mp4,video/*;q=0.9,*/*;q=0.8',
+            'User-Agent'      => self::UA_ANDROID,
+            'Referer'         => 'https://www.facebook.com/',
+            'Accept'          => 'video/mp4,video/*;q=0.9,*/*;q=0.8',
+            'Accept-Language' => 'fr-FR,fr;q=0.9,en;q=0.7',
         ],
         'instagram' => [
-            'User-Agent' => 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.82 Mobile Safari/537.36',
-            'Referer'    => 'https://www.instagram.com/',
-            'Accept'     => 'video/mp4,video/*;q=0.9,*/*;q=0.8',
+            'User-Agent'      => self::UA_ANDROID,
+            'Referer'         => 'https://www.instagram.com/',
+            'Accept'          => 'video/mp4,video/*;q=0.9,*/*;q=0.8',
+            'Accept-Language' => 'fr-FR,fr;q=0.9,en;q=0.7',
         ],
         'linkedin' => [
-            'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'User-Agent' => self::UA_DESKTOP,
             'Referer'    => 'https://www.linkedin.com/',
             'Accept'     => 'video/mp4,video/*;q=0.9,*/*;q=0.8',
         ],
         'twitter' => [
-            'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'User-Agent' => self::UA_DESKTOP,
             'Referer'    => 'https://twitter.com/',
+            'Accept'     => 'video/mp4,video/*;q=0.9,*/*;q=0.8',
+        ],
+        'dailymotion' => [
+            'User-Agent' => self::UA_DESKTOP,
+            'Referer'    => 'https://www.dailymotion.com/',
+            'Accept'     => 'video/mp4,video/*;q=0.9,*/*;q=0.8',
+        ],
+        'vimeo' => [
+            'User-Agent' => self::UA_DESKTOP,
+            'Referer'    => 'https://vimeo.com/',
+            'Accept'     => 'video/mp4,video/*;q=0.9,*/*;q=0.8',
+        ],
+        'twitch' => [
+            'User-Agent' => self::UA_DESKTOP,
+            'Referer'    => 'https://www.twitch.tv/',
+            'Accept'     => 'video/mp4,video/*;q=0.9,*/*;q=0.8',
+        ],
+        'rumble' => [
+            'User-Agent' => self::UA_DESKTOP,
+            'Referer'    => 'https://rumble.com/',
+            'Accept'     => 'video/mp4,video/*;q=0.9,*/*;q=0.8',
+        ],
+        'odysee' => [
+            'User-Agent' => self::UA_DESKTOP,
+            'Referer'    => 'https://odysee.com/',
+            'Accept'     => 'video/mp4,video/*;q=0.9,*/*;q=0.8',
+        ],
+        'snapchat' => [
+            'User-Agent' => self::UA_MOBILE,
+            'Referer'    => 'https://www.snapchat.com/',
+            'Accept'     => 'video/mp4,video/*;q=0.9,*/*;q=0.8',
+        ],
+        'bilibili' => [
+            'User-Agent' => self::UA_DESKTOP,
+            'Referer'    => 'https://www.bilibili.com/',
             'Accept'     => 'video/mp4,video/*;q=0.9,*/*;q=0.8',
         ],
     ];
@@ -108,13 +151,20 @@ class VideoController extends Controller
     public function platforms(): JsonResponse
     {
         $fallback = ['platforms' => [
-            ['id' => 'tiktok',    'name' => 'TikTok',    'no_watermark' => true],
-            ['id' => 'youtube',   'name' => 'YouTube',   'no_watermark' => false],
-            ['id' => 'pinterest', 'name' => 'Pinterest', 'no_watermark' => false],
-            ['id' => 'facebook',  'name' => 'Facebook',  'no_watermark' => false],
-            ['id' => 'instagram', 'name' => 'Instagram', 'no_watermark' => false],
-            ['id' => 'linkedin',  'name' => 'LinkedIn',  'no_watermark' => false],
-            ['id' => 'twitter',   'name' => 'Twitter/X', 'no_watermark' => false],
+            ['id' => 'tiktok',      'name' => 'TikTok',      'no_watermark' => true,  'notes' => 'Sans watermark via API mobile'],
+            ['id' => 'youtube',     'name' => 'YouTube',     'no_watermark' => false, 'notes' => 'HD jusqu\'à 4K, playlists supportées'],
+            ['id' => 'pinterest',   'name' => 'Pinterest',   'no_watermark' => false, 'notes' => 'MP4 direct (scraper intégré)'],
+            ['id' => 'facebook',    'name' => 'Facebook',    'no_watermark' => false, 'notes' => 'Vidéos & Reels publics'],
+            ['id' => 'instagram',   'name' => 'Instagram',   'no_watermark' => false, 'notes' => 'Reels & posts publics'],
+            ['id' => 'linkedin',    'name' => 'LinkedIn',    'no_watermark' => false, 'notes' => 'Vidéos natives'],
+            ['id' => 'twitter',     'name' => 'Twitter/X',   'no_watermark' => false, 'notes' => 'Vidéos tweets'],
+            ['id' => 'dailymotion', 'name' => 'Dailymotion', 'no_watermark' => false, 'notes' => 'Toutes qualités'],
+            ['id' => 'vimeo',       'name' => 'Vimeo',       'no_watermark' => false, 'notes' => 'HD jusqu\'à 4K'],
+            ['id' => 'twitch',      'name' => 'Twitch',      'no_watermark' => false, 'notes' => 'Clips & VODs'],
+            ['id' => 'rumble',      'name' => 'Rumble',      'no_watermark' => false, 'notes' => 'Toutes qualités'],
+            ['id' => 'odysee',      'name' => 'Odysee',      'no_watermark' => false, 'notes' => 'Vidéos LBRY/Odysee'],
+            ['id' => 'snapchat',    'name' => 'Snapchat',    'no_watermark' => false, 'notes' => 'Spotlight publics'],
+            ['id' => 'bilibili',    'name' => 'Bilibili',    'no_watermark' => false, 'notes' => 'Vidéos chinoises'],
         ]];
 
         try {
@@ -145,7 +195,7 @@ class VideoController extends Controller
     {
         $request->validate(['url' => ['required', 'url', 'max:2048']]);
         $url      = trim($request->input('url'));
-        $cacheKey = 'wzs_' . md5($url);
+        $cacheKey = 'wzs_' . hash('sha256', $url);
 
         try {
             $data = Cache::remember($cacheKey, self::CACHE_TTL, function () use ($url) {
@@ -396,34 +446,46 @@ class VideoController extends Controller
     }
 
     // ─── SSE progress ──────────────────────────────────────────────────────────
+    //
+    // Proxifie le stream SSE du service Python vers le navigateur.
+    // Le Python maintient _progress_store[job_id] et streame les événements.
 
     public function progress(string $jobId): \Symfony\Component\HttpFoundation\StreamedResponse
     {
-        return response()->stream(function () use ($jobId) {
-            $cacheKey = "wzs_job_{$jobId}";
-            $timeout  = 60;
-            $start    = time();
+        $extractorUrl = $this->extractorUrl;
 
-            while (time() - $start < $timeout) {
-                $data = Cache::get($cacheKey);
-
-                if ($data !== null) {
-                    echo "data: " . json_encode($data) . "\n\n";
+        return response()->stream(function () use ($jobId, $extractorUrl) {
+            $ch = curl_init();
+            curl_setopt_array($ch, [
+                CURLOPT_URL            => "{$extractorUrl}/extract/progress/{$jobId}",
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_TIMEOUT        => 90,
+                CURLOPT_CONNECTTIMEOUT => 5,
+                CURLOPT_SSL_VERIFYPEER => true,
+                // Écriture chunk par chunk vers le navigateur
+                CURLOPT_WRITEFUNCTION  => function ($_curl, $data) {
+                    echo $data;
                     if (ob_get_level() > 0) ob_flush();
                     flush();
+                    return strlen($data);
+                },
+                CURLOPT_HEADER         => false,
+                CURLOPT_RETURNTRANSFER => false,
+            ]);
+            curl_exec($ch);
+            $error = curl_error($ch);
+            unset($ch);
 
-                    if (in_array($data['status'] ?? '', ['done', 'error'])) {
-                        break;
-                    }
-                }
-
-                usleep(500000); // 0.5s polling
+            if ($error) {
+                echo "data: " . json_encode(['status' => 'error', 'error' => 'Extractor unreachable']) . "\n\n";
+                if (ob_get_level() > 0) ob_flush();
+                flush();
             }
         }, 200, [
-            'Content-Type'  => 'text/event-stream',
-            'Cache-Control' => 'no-cache',
+            'Content-Type'      => 'text/event-stream',
+            'Cache-Control'     => 'no-cache',
             'X-Accel-Buffering' => 'no',
-            'Connection'    => 'keep-alive',
+            'Connection'        => 'keep-alive',
         ]);
     }
 
@@ -525,15 +587,7 @@ class VideoController extends Controller
             default => 'video/mp4',
         };
 
-        $headers     = self::PLATFORM_DOWNLOAD_HEADERS[$platform] ?? self::PLATFORM_DOWNLOAD_HEADERS['tiktok'];
-        $checkResult = $this->curlHead($videoUrl, $headers);
-
-        if ($checkResult['http_code'] >= 400 && $checkResult['http_code'] !== 0) {
-            return response()->json([
-                'success' => false,
-                'message' => "L'URL vidéo a expiré (code {$checkResult['http_code']}). Veuillez extraire à nouveau.",
-            ], 410);
-        }
+        $headers = self::PLATFORM_DOWNLOAD_HEADERS[$platform] ?? self::PLATFORM_DOWNLOAD_HEADERS['tiktok'];
 
         return response()->streamDownload(
             function () use ($videoUrl, $headers) {
@@ -613,25 +667,6 @@ class VideoController extends Controller
             'Cache-Control'       => 'no-cache',
             'X-Accel-Buffering'   => 'no',
         ]);
-    }
-
-    private function curlHead(string $url, array $headers): array
-    {
-        $ch = curl_init();
-        curl_setopt_array($ch, [
-            CURLOPT_URL            => $url,
-            CURLOPT_NOBODY         => true,
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_MAXREDIRS      => 3,
-            CURLOPT_TIMEOUT        => 10,
-            CURLOPT_HTTPHEADER     => $this->formatCurlHeaders($headers),
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_SSL_VERIFYPEER => true,
-        ]);
-        curl_exec($ch);
-        $result = ['http_code' => (int) curl_getinfo($ch, CURLINFO_HTTP_CODE), 'error' => curl_error($ch)];
-        unset($ch);
-        return $result;
     }
 
     private function formatCurlHeaders(array $headers): array

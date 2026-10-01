@@ -10,7 +10,6 @@ Nouvelles fonctionnalités:
 """
 
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 import yt_dlp
@@ -48,13 +47,8 @@ app = FastAPI(
     version="3.0.0",
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# L'extractor est un service INTERNE uniquement accessible par Laravel via le
+# réseau Docker. Pas de CORS nécessaire — aucun navigateur n'appelle ce service.
 
 
 # ─── Schémas ──────────────────────────────────────────────────────────────────
@@ -276,17 +270,111 @@ DOWNLOAD_HEADERS: dict[str, dict] = {
 
 # ─── Options yt-dlp ──────────────────────────────────────────────────────────
 
-def get_ydl_opts(platform: str, quality: str = "best") -> dict:
-    # Qualité YouTube par défaut: 1080p
-    yt_format = {
-        "4k":   "bestvideo[height<=2160][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=2160]+bestaudio/best",
-        "1080": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best",
-        "720":  "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best",
-        "480":  "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best",
-        "audio": "bestaudio[ext=m4a]/bestaudio",
-        "best": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[ext=mp4]/best",
-    }.get(quality, "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[ext=mp4]/best")
+# Formats vidéo selon la qualité demandée (partagés entre YouTube et Vimeo)
+_YT_FORMATS: dict[str, str] = {
+    "4k":    "bestvideo[height<=2160][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=2160]+bestaudio/best",
+    "1080":  "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best",
+    "720":   "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best",
+    "480":   "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best",
+    "audio": "bestaudio[ext=m4a]/bestaudio",
+    "best":  "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[ext=mp4]/best",
+}
+_DEFAULT_FORMAT = "best[ext=mp4]/bestvideo+bestaudio/best"
 
+# Surcharges par plateforme : fusionnées sur la config de base.
+# Clés spéciales : "__ua" remplace le User-Agent, "__extra_headers" ajoute des headers.
+_PLATFORM_OVERRIDES: dict[str, dict] = {
+    "tiktok": {
+        "format": "bestvideo+bestaudio/best",
+        "__ua": UA_ANDROID,
+        "__extra_headers": {"Referer": "https://www.tiktok.com/"},
+        "extractor_args": {
+            "tiktok": {
+                "webpage_download": ["0"],
+                "api_hostname": ["api16-normal-c-alisg.tiktokv.com"],
+                "app_name": ["tiktok"],
+                "app_version": ["35.1.2"],
+                "manifest_app_version": ["351"],
+            }
+        },
+    },
+    "youtube": {
+        "__yt_quality": True,          # utilise _YT_FORMATS[quality]
+        "merge_output_format": "mp4",
+        "__extra_headers": {"Referer": "https://www.youtube.com/"},
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["tv_embedded", "web_embedded", "android", "web"],
+                "player_skip": ["webpage", "configs"],
+            }
+        },
+    },
+    "pinterest": {
+        "format": "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio/best",
+        "__ua": UA_MOBILE,
+        "__extra_headers": {
+            "Referer": "https://www.pinterest.com/",
+            "X-Pinterest-AppState": "active",
+        },
+    },
+    "facebook": {
+        "format": "best[ext=mp4]/bestvideo+bestaudio/best",
+        "__ua": UA_ANDROID,
+        "__extra_headers": {
+            "Referer": "https://www.facebook.com/",
+            "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.7",
+        },
+    },
+    "instagram": {
+        "format": "best[ext=mp4]/best",
+        "__ua": UA_ANDROID,
+        "__extra_headers": {
+            "Referer": "https://www.instagram.com/",
+            "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.7",
+        },
+    },
+    "linkedin": {
+        "format": "best[ext=mp4]/best",
+        "__extra_headers": {"Referer": "https://www.linkedin.com/"},
+    },
+    "twitter": {
+        "format": _DEFAULT_FORMAT,
+        "__extra_headers": {"Referer": "https://twitter.com/"},
+    },
+    "dailymotion": {
+        "format": _DEFAULT_FORMAT,
+        "__extra_headers": {"Referer": "https://www.dailymotion.com/"},
+    },
+    "vimeo": {
+        "__yt_quality": True,
+        "merge_output_format": "mp4",
+        "__extra_headers": {"Referer": "https://vimeo.com/"},
+    },
+    "twitch": {
+        "format": _DEFAULT_FORMAT,
+        "__extra_headers": {"Referer": "https://www.twitch.tv/"},
+    },
+    "rumble": {
+        "format": _DEFAULT_FORMAT,
+        "__extra_headers": {"Referer": "https://rumble.com/"},
+    },
+    "odysee": {
+        "format": _DEFAULT_FORMAT,
+        "__extra_headers": {"Referer": "https://odysee.com/"},
+    },
+    "snapchat": {
+        "format": "best[ext=mp4]/best",
+        "__ua": UA_MOBILE,
+        "__extra_headers": {"Referer": "https://www.snapchat.com/"},
+    },
+    "bilibili": {
+        "format": "bestvideo[ext=mp4]+bestaudio/best[ext=mp4]/best",
+        "__extra_headers": {"Referer": "https://www.bilibili.com/"},
+    },
+}
+
+
+def get_ydl_opts(platform: str, quality: str = "best") -> dict:
     base: dict = {
         "quiet": True,
         "no_warnings": True,
@@ -294,169 +382,32 @@ def get_ydl_opts(platform: str, quality: str = "best") -> dict:
         "socket_timeout": 30,
         "retries": 3,
         "fragment_retries": 3,
+        "nocheckcertificate": False,
         "http_headers": {
             "User-Agent": UA_DESKTOP,
             "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         },
-        "nocheckcertificate": False,
+        "format": _DEFAULT_FORMAT,
     }
 
-    if platform == "tiktok":
-        base.update({
-            "format": "bestvideo+bestaudio/best",
-            "extractor_args": {
-                "tiktok": {
-                    "webpage_download": ["0"],
-                    "api_hostname": ["api16-normal-c-alisg.tiktokv.com"],
-                    "app_name": ["tiktok"],
-                    "app_version": ["35.1.2"],
-                    "manifest_app_version": ["351"],
-                }
-            },
-            "http_headers": {
-                **base["http_headers"],
-                "User-Agent": UA_ANDROID,
-                "Referer": "https://www.tiktok.com/",
-            },
-        })
+    overrides = _PLATFORM_OVERRIDES.get(platform, {})
 
-    elif platform == "youtube":
-        base.update({
-            "format": yt_format,
-            "merge_output_format": "mp4",
-            "http_headers": {
-                **base["http_headers"],
-                "Referer": "https://www.youtube.com/",
-            },
-            # Contourne le blocage PO-token / "Sign in" sans cookies
-            "extractor_args": {
-                "youtube": {
-                    "player_client": ["tv_embedded", "web_embedded", "android", "web"],
-                    "player_skip": ["webpage", "configs"],
-                }
-            },
-        })
+    # Résoudre le format qualité si la plateforme le demande
+    if overrides.pop("__yt_quality", False):
+        base["format"] = _YT_FORMATS.get(quality, _YT_FORMATS["best"])
 
-    elif platform == "pinterest":
-        base.update({
-            "format": "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio/best",
-            "http_headers": {
-                **base["http_headers"],
-                "User-Agent": UA_MOBILE,
-                "Referer": "https://www.pinterest.com/",
-                "X-Pinterest-AppState": "active",
-            },
-        })
+    # Fusionner User-Agent et headers supplémentaires
+    ua = overrides.pop("__ua", None)
+    extra_headers = overrides.pop("__extra_headers", {})
 
-    elif platform == "facebook":
-        base.update({
-            "format": "best[ext=mp4]/bestvideo+bestaudio/best",
-            "http_headers": {
-                **base["http_headers"],
-                "User-Agent": UA_ANDROID,
-                "Referer": "https://www.facebook.com/",
-                "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.7",
-            },
-        })
+    merged_headers = {**base["http_headers"]}
+    if ua:
+        merged_headers["User-Agent"] = ua
+    merged_headers.update(extra_headers)
 
-    elif platform == "instagram":
-        base.update({
-            "format": "best[ext=mp4]/best",
-            "http_headers": {
-                **base["http_headers"],
-                "User-Agent": UA_ANDROID,
-                "Referer": "https://www.instagram.com/",
-                "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.7",
-            },
-        })
-
-    elif platform == "linkedin":
-        base.update({
-            "format": "best[ext=mp4]/best",
-            "http_headers": {
-                **base["http_headers"],
-                "Referer": "https://www.linkedin.com/",
-            },
-        })
-
-    elif platform == "twitter":
-        base.update({
-            "format": "best[ext=mp4]/bestvideo+bestaudio/best",
-            "http_headers": {
-                **base["http_headers"],
-                "Referer": "https://twitter.com/",
-            },
-        })
-
-    elif platform == "dailymotion":
-        base.update({
-            "format": "best[ext=mp4]/bestvideo+bestaudio/best",
-            "http_headers": {
-                **base["http_headers"],
-                "Referer": "https://www.dailymotion.com/",
-            },
-        })
-
-    elif platform == "vimeo":
-        base.update({
-            "format": yt_format,
-            "merge_output_format": "mp4",
-            "http_headers": {
-                **base["http_headers"],
-                "Referer": "https://vimeo.com/",
-            },
-        })
-
-    elif platform == "twitch":
-        base.update({
-            "format": "best[ext=mp4]/bestvideo+bestaudio/best",
-            "http_headers": {
-                **base["http_headers"],
-                "Referer": "https://www.twitch.tv/",
-            },
-        })
-
-    elif platform == "rumble":
-        base.update({
-            "format": "best[ext=mp4]/bestvideo+bestaudio/best",
-            "http_headers": {
-                **base["http_headers"],
-                "Referer": "https://rumble.com/",
-            },
-        })
-
-    elif platform == "odysee":
-        base.update({
-            "format": "best[ext=mp4]/bestvideo+bestaudio/best",
-            "http_headers": {
-                **base["http_headers"],
-                "Referer": "https://odysee.com/",
-            },
-        })
-
-    elif platform == "snapchat":
-        base.update({
-            "format": "best[ext=mp4]/best",
-            "http_headers": {
-                **base["http_headers"],
-                "User-Agent": UA_MOBILE,
-                "Referer": "https://www.snapchat.com/",
-            },
-        })
-
-    elif platform == "bilibili":
-        base.update({
-            "format": "bestvideo[ext=mp4]+bestaudio/best[ext=mp4]/best",
-            "http_headers": {
-                **base["http_headers"],
-                "Referer": "https://www.bilibili.com/",
-            },
-        })
-
-    else:
-        base.update({"format": "best[ext=mp4]/bestvideo+bestaudio/best"})
-
+    base.update(overrides)
+    base["http_headers"] = merged_headers
     return base
 
 
@@ -585,7 +536,7 @@ def _facebook_scrape(url: str) -> Optional[VideoInfo]:
 
 
 async def _extract_facebook(url: str) -> VideoInfo:
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     url = await loop.run_in_executor(executor, _resolve_facebook_url, url)
 
@@ -832,7 +783,7 @@ def _pinimg_hls_to_mp4(url: Optional[str]) -> Optional[str]:
 
 
 async def _extract_pinterest(url: str) -> VideoInfo:
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     if "pin.it" in url:
         url = await loop.run_in_executor(executor, _resolve_pin_it, url)
@@ -985,7 +936,7 @@ def _make_tiktok_opts(hostname: str, app_name: str, app_version: str, manifest: 
         "socket_timeout": 20,
         "retries": 2,
         "fragment_retries": 2,
-        "nocheckcertificate": True,
+        "nocheckcertificate": False,
         "format": "bestvideo+bestaudio/best",
         "extractor_args": {
             "tiktok": {
@@ -1006,7 +957,7 @@ def _make_tiktok_opts(hostname: str, app_name: str, app_version: str, manifest: 
 
 
 async def _extract_tiktok(url: str) -> VideoInfo:
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     last_err = "Échec TikTok"
 
     # ── 1. Essai yt-dlp multi-endpoints ──────────────────────────────────────
@@ -1201,9 +1152,9 @@ def _dailymotion_api(url: str) -> Optional[VideoInfo]:
 
 
 async def _extract_dailymotion(url: str) -> VideoInfo:
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     # Essai yt-dlp sans impersonation
-    opts = {**get_ydl_opts("dailymotion"), "impersonate": None, "nocheckcertificate": True}
+    opts = {**get_ydl_opts("dailymotion"), "impersonate": None}
     def _try():
         with yt_dlp.YoutubeDL(opts) as ydl:
             return ydl.extract_info(url, download=False)
@@ -1278,7 +1229,7 @@ async def extract_video_info(url: str, quality: str = "best") -> VideoInfo:
 
 
     ydl_opts = get_ydl_opts(platform, quality)
-    loop     = asyncio.get_event_loop()
+    loop     = asyncio.get_running_loop()
 
     def _sync_extract() -> dict:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -1344,7 +1295,7 @@ async def extract_video_info(url: str, quality: str = "best") -> VideoInfo:
 
 async def extract_playlist_info(url: str, limit: int = 20) -> PlaylistResponse:
     platform = detect_platform(url)
-    loop     = asyncio.get_event_loop()
+    loop     = asyncio.get_running_loop()
 
     flat_opts = {
         "quiet": True,
@@ -1375,15 +1326,19 @@ async def extract_playlist_info(url: str, limit: int = 20) -> PlaylistResponse:
     entries = flat.get("entries") or []
     playlist_title = flat.get("title") or flat.get("playlist_title") or "Playlist"
 
+    # Limiter la concurrence au nombre de workers du ThreadPoolExecutor
+    _semaphore = asyncio.Semaphore(executor._max_workers)
+
     async def _extract_entry(i: int, entry: dict) -> PlaylistItem:
         entry_url = entry.get("url") or entry.get("webpage_url") or ""
         if not entry_url.startswith("http"):
             entry_url = f"https://www.youtube.com/watch?v={entry.get('id', '')}"
-        try:
-            info = await extract_video_info(entry_url)
-            return PlaylistItem(index=i, success=True, data=info)
-        except Exception as e:
-            return PlaylistItem(index=i, success=False, error=str(e))
+        async with _semaphore:
+            try:
+                info = await extract_video_info(entry_url)
+                return PlaylistItem(index=i, success=True, data=info)
+            except Exception as e:
+                return PlaylistItem(index=i, success=False, error=str(e))
 
     tasks = [_extract_entry(i, e) for i, e in enumerate(entries[:limit])]
     items = await asyncio.gather(*tasks, return_exceptions=False)
@@ -1453,7 +1408,7 @@ async def extract(
         return ExtractResponse(success=False, error=str(e), duration_ms=elapsed)
     except Exception as e:
         logger.error(f"Erreur interne : {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Erreur interne du serveur. Consultez les logs.")
 
 
 @app.post("/extract/batch", response_model=BatchResponse, tags=["Extraction"])
@@ -1482,10 +1437,10 @@ async def extract_playlist_endpoint(body: PlaylistRequest):
         raise HTTPException(status_code=400, detail="URL invalide")
 
     platform = detect_platform(url)
-    if platform not in PLAYLIST_PLATFORMS and platform != "unknown":
+    if platform not in PLAYLIST_PLATFORMS:
         raise HTTPException(
             status_code=422,
-            detail=f"Les playlists ne sont pas supportées pour {platform}"
+            detail=f"Les playlists ne sont pas supportées pour {platform if platform != 'unknown' else 'cette plateforme'}"
         )
 
     try:
@@ -1494,7 +1449,7 @@ async def extract_playlist_endpoint(body: PlaylistRequest):
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         logger.error(f"Playlist error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Erreur interne du serveur. Consultez les logs.")
 
 
 @app.get("/extract/progress/{job_id}", tags=["Extraction"])
