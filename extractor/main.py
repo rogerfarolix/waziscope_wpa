@@ -419,9 +419,10 @@ def get_ydl_opts(platform: str, quality: str = "best") -> dict:
         base["format"] = _YT_FORMATS.get(quality, _YT_FORMATS["best"])
 
     # Injecter cookies + EJS solver pour YouTube si disponibles
+    # NOTE: la clé Python est "remote_components" (pas "extractor_components")
     if overrides.pop("__youtube_cookies", False) and _COOKIES_PATH:
-        base["cookiefile"] = _COOKIES_PATH
-        base["extractor_components"] = ["ejs:github"]
+        base["cookiefile"]        = _COOKIES_PATH
+        base["remote_components"] = {"ejs:github"}
 
     # Fusionner User-Agent et headers supplémentaires
     ua = overrides.pop("__ua", None)
@@ -1345,8 +1346,8 @@ async def extract_playlist_info(url: str, limit: int = 20) -> PlaylistResponse:
         },
     }
     if _COOKIES_PATH:
-        flat_opts["cookiefile"] = _COOKIES_PATH
-        flat_opts["extractor_components"] = ["ejs:github"]
+        flat_opts["cookiefile"]        = _COOKIES_PATH
+        flat_opts["remote_components"] = {"ejs:github"}
 
     def _get_flat():
         with yt_dlp.YoutubeDL(flat_opts) as ydl:
