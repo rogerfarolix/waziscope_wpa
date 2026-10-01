@@ -2,7 +2,7 @@
 """
 WaziScope — Vérification cookies YouTube + santé yt-dlp + alerte email.
 Usage : python3 check_cookies.py
-Cron  : 0 9 * * 1  /var/www/Projets/nealix/waziscope_wpa/extractor/run_cookie_check.sh
+Cron  : 0 9 * * *  /var/www/Projets/nealix/waziscope_wpa/extractor/run_cookie_check.sh
 """
 
 import os
@@ -26,11 +26,14 @@ MAIL_PASSWORD = os.getenv("MAIL_PASSWORD",     "")
 MAIL_FROM     = os.getenv("MAIL_FROM_ADDRESS", "contact@nealix.org")
 MAIL_TO       = os.getenv("COOKIE_ALERT_EMAIL","rogergnanih66@gmail.com")
 
-WARN_DAYS     = 30   # alerter X jours avant expiration
-# Vidéo de test YouTube publique (toujours disponible)
-TEST_VIDEO    = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-# Vidéo qui nécessite les cookies (restreinte)
-TEST_RESTRICTED = "https://www.youtube.com/watch?v=2HaUgNmpV8Q"
+WARN_DAYS = 30  # alerter X jours avant expiration
+
+# Vidéo publique — fonctionne sans cookies depuis n'importe quelle IP
+TEST_PUBLIC = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+# Vidéo qui retourne LOGIN_REQUIRED depuis une IP datacenter sans cookies.
+# Sert de test fonctionnel : si elle marche avec cookies → cookies valides.
+# PSY - Gangnam Style : confirmé bloqué depuis VPS sans auth.
+TEST_AUTH_REQUIRED = "https://www.youtube.com/watch?v=kffacxfA7G4"
 
 # ─── Email ────────────────────────────────────────────────────────────────────
 
@@ -88,72 +91,88 @@ def check_cookies() -> dict:
     if soonest is None:
         return {"status": "ok", "found": list(found.keys()), "days_left": None}
 
-    days_left = (soonest - now) / 86400
+    days_left   = (soonest - now) / 86400
     expiry_date = datetime.fromtimestamp(soonest, tz=timezone.utc).strftime("%d/%m/%Y")
 
     if days_left < 0:
-        return {"status": "expired",  "days_left": int(days_left), "expiry_date": expiry_date}
+        return {"status": "expired",       "days_left": int(days_left), "expiry_date": expiry_date}
     if days_left < WARN_DAYS:
         return {"status": "expiring_soon", "days_left": int(days_left), "expiry_date": expiry_date}
     return {"status": "ok", "days_left": int(days_left), "expiry_date": expiry_date}
 
 # ─── Check yt-dlp ─────────────────────────────────────────────────────────────
 
+def _run_ytdlp(ytdlp: str, url: str, extra_args: list[str] = []) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [ytdlp, *extra_args, "--no-playlist", "--get-title", url],
+        capture_output=True, text=True, timeout=90,
+    )
+
 def check_ytdlp() -> dict:
-    """Vérifie la version yt-dlp et teste une extraction YouTube réelle."""
+    """Vérifie la version yt-dlp et teste l'extraction YouTube avec et sans cookies."""
     ytdlp = VENV_YTDLP if os.path.isfile(VENV_YTDLP) else "yt-dlp"
 
-    # Version
     try:
         version = subprocess.check_output([ytdlp, "--version"], timeout=10, text=True).strip()
     except Exception as e:
         return {"status": "missing", "message": f"yt-dlp introuvable : {e}"}
 
-    # Test extraction vidéo publique
+    common_args = [
+        "--js-runtimes", "node:/usr/bin/node",
+        "--extractor-args", "youtube:player_client=ios,android_vr,web",
+    ]
+
+    # ── Test 1 : vidéo publique sans cookies ─────────────────────────────────
     try:
-        result = subprocess.run(
-            [ytdlp,
-             "--cookies", COOKIES_FILE,
-             "--js-runtimes", "node:/usr/bin/node",
-             "--remote-components", "ejs:github",
-             "--extractor-args", "youtube:player_client=ios,android_vr,web",
-             "--no-playlist", "--get-title",
-             TEST_VIDEO],
-            capture_output=True, text=True, timeout=60
-        )
-        if result.returncode != 0 or not result.stdout.strip():
-            return {
-                "status": "broken",
-                "version": version,
-                "message": result.stderr.strip().splitlines()[-1] if result.stderr else "Extraction échouée",
-            }
+        r_pub = _run_ytdlp(ytdlp, TEST_PUBLIC, common_args)
+        if r_pub.returncode != 0 or not r_pub.stdout.strip():
+            err = (r_pub.stderr.strip().splitlines() or ["Extraction échouée"])[-1]
+            return {"status": "broken", "version": version, "message": err}
     except subprocess.TimeoutExpired:
-        return {"status": "timeout", "version": version, "message": "Timeout lors de l'extraction test"}
+        return {"status": "timeout", "version": version, "message": "Timeout vidéo publique"}
     except Exception as e:
         return {"status": "error", "version": version, "message": str(e)}
 
-    # Test vidéo restreinte (nécessite cookies)
-    restricted_ok = False
-    try:
-        r2 = subprocess.run(
-            [ytdlp,
-             "--cookies", COOKIES_FILE,
-             "--js-runtimes", "node:/usr/bin/node",
-             "--remote-components", "ejs:github",
-             "--extractor-args", "youtube:player_client=ios,android_vr,web",
-             "--no-playlist", "--get-title",
-             TEST_RESTRICTED],
-            capture_output=True, text=True, timeout=60
-        )
-        restricted_ok = r2.returncode == 0 and bool(r2.stdout.strip())
-    except Exception:
-        pass
+    # ── Test 2 : vidéo AUTH_REQUIRED avec cookies (si dispo) ─────────────────
+    cookies_exist  = os.path.isfile(COOKIES_FILE)
+    auth_ok        = None
+    auth_message   = None
+
+    if cookies_exist:
+        cookie_args = [*common_args, "--cookies", COOKIES_FILE]
+        try:
+            r_auth = _run_ytdlp(ytdlp, TEST_AUTH_REQUIRED, cookie_args)
+            if r_auth.returncode == 0 and r_auth.stdout.strip():
+                auth_ok = True
+            else:
+                auth_ok = False
+                stderr  = r_auth.stderr or ""
+                # Distinguer "invalidés par Google" vs autre erreur
+                if "Sign in to confirm" in stderr or "LOGIN_REQUIRED" in stderr or "bot" in stderr.lower():
+                    auth_message = "Cookies invalidés par Google (détection IP datacenter)"
+                    return {
+                        "status":  "cookies_invalidated",
+                        "version": version,
+                        "public_ok": True,
+                        "auth_ok":   False,
+                        "message":   auth_message,
+                    }
+                else:
+                    auth_message = (stderr.strip().splitlines() or ["Erreur inconnue"])[-1]
+        except subprocess.TimeoutExpired:
+            auth_ok      = False
+            auth_message = "Timeout lors du test d'authentification"
+        except Exception as e:
+            auth_ok      = False
+            auth_message = str(e)
 
     return {
-        "status":        "ok",
-        "version":       version,
-        "public_ok":     True,
-        "restricted_ok": restricted_ok,
+        "status":     "ok",
+        "version":    version,
+        "public_ok":  True,
+        "auth_ok":    auth_ok,
+        "auth_msg":   auth_message,
+        "has_cookies": cookies_exist,
     }
 
 # ─── Email builder ────────────────────────────────────────────────────────────
@@ -166,6 +185,11 @@ RENEW_STEPS = """
   <li><code>scp cookies.txt nealix:/var/www/Projets/nealix/waziscope_wpa/extractor/youtube_cookies.txt</code></li>
   <li><code>ssh nealix "sudo supervisorctl restart waziscope-extractor"</code></li>
 </ol>
+<p style="color:#b45309;font-size:13px">
+  ⚠️ Les cookies exportés depuis un PC résidentiel durent quelques jours sur le VPS
+  (Google détecte la différence d'IP). Pour une solution stable, crée un compte Google
+  dédié et connecte-toi directement depuis le VPS.
+</p>
 """
 
 def build_email(cookie_result: dict, ytdlp_result: dict) -> tuple[str, str]:
@@ -184,39 +208,57 @@ def build_email(cookie_result: dict, ytdlp_result: dict) -> tuple[str, str]:
         warnings.append(f"⚠️ Cookies expirent le <strong>{cookie_result['expiry_date']}</strong> (dans {cookie_result['days_left']} jours)")
 
     # yt-dlp
-    ys = ytdlp_result["status"]
+    ys      = ytdlp_result["status"]
     version = ytdlp_result.get("version", "?")
+
     if ys == "missing":
         problems.append(f"❌ yt-dlp <strong>introuvable</strong> : {ytdlp_result.get('message')}")
     elif ys in ("broken", "error", "timeout"):
         problems.append(f"❌ yt-dlp <strong>cassé</strong> (v{version}) : {ytdlp_result.get('message')}")
+    elif ys == "cookies_invalidated":
+        problems.append(
+            f"❌ <strong>Cookies invalidés par Google</strong> — YouTube détecte l'IP datacenter.<br>"
+            f"&nbsp;&nbsp;&nbsp;Les cookies ont été exportés depuis un PC résidentiel puis utilisés depuis le VPS.<br>"
+            f"&nbsp;&nbsp;&nbsp;Google les a révoqués. Renouvelle-les immédiatement."
+        )
     elif ys == "ok":
-        if not ytdlp_result.get("restricted_ok"):
-            warnings.append(f"⚠️ yt-dlp v{version} OK mais les vidéos <strong>restreintes échouent</strong> (cookies invalides ?)")
+        if ytdlp_result.get("has_cookies") and not ytdlp_result.get("auth_ok"):
+            msg = ytdlp_result.get("auth_msg", "erreur inconnue")
+            warnings.append(
+                f"⚠️ yt-dlp v{version} OK mais les vidéos authentifiées échouent : <code>{msg}</code>"
+            )
 
     if not problems and not warnings:
-        return "", ""  # tout va bien
+        return "", ""
 
     severity = "🔴 Problème" if problems else "🟡 Avertissement"
     subject  = f"{severity} WaziScope — YouTube extraction"
 
     rows = "".join(f'<li style="margin:6px 0">{p}</li>' for p in problems + warnings)
 
+    need_renew = (
+        cs in ("missing", "expired", "empty") or
+        ys == "cookies_invalidated" or
+        (ys == "ok" and ytdlp_result.get("has_cookies") and not ytdlp_result.get("auth_ok"))
+    )
+
+    expiry_str = cookie_result.get("expiry_date", "?")
+
     html = f"""<!DOCTYPE html>
 <html lang="fr"><head><meta charset="utf-8"></head>
 <body style="font-family:sans-serif;color:#1a1a1a;max-width:560px;margin:32px auto">
   <div style="background:#080b0f;padding:20px 24px;border-radius:12px 12px 0 0">
     <span style="color:#1bffa4;font-weight:700;font-size:18px">Wazi<em style="font-style:normal">Scope</em></span>
-    <span style="color:#7a8499;font-size:13px;margin-left:12px">Rapport hebdomadaire</span>
+    <span style="color:#7a8499;font-size:13px;margin-left:12px">Rapport quotidien</span>
   </div>
   <div style="border:1px solid #e5e7eb;border-top:none;padding:24px;border-radius:0 0 12px 12px">
     <ul style="padding-left:20px">{rows}</ul>
 
-    {"<h3>Renouveler les cookies</h3>" + RENEW_STEPS if problems or not ytdlp_result.get('restricted_ok') else ""}
+    {"<h3>Renouveler les cookies</h3>" + RENEW_STEPS if need_renew else ""}
 
     <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0">
     <p style="font-size:12px;color:#9ca3af">
-      yt-dlp v{version} · cookies : {cookie_result.get('expiry_date','?')} ·
+      yt-dlp v{version} · cookies : {expiry_str} ·
       {datetime.now(tz=timezone.utc).strftime('%d/%m/%Y %H:%M')} UTC
     </p>
   </div>
@@ -233,9 +275,13 @@ if __name__ == "__main__":
     print(f"[cookies] {cookie_result['status']}  {cookie_result.get('message') or cookie_result.get('expiry_date','')}")
 
     ytdlp_result = check_ytdlp()
-    print(f"[yt-dlp]  {ytdlp_result['status']}  v{ytdlp_result.get('version','?')}  "
-          f"public={'✓' if ytdlp_result.get('public_ok') else '✗'}  "
-          f"restricted={'✓' if ytdlp_result.get('restricted_ok') else '✗'}")
+    auth_sym = "✓" if ytdlp_result.get("auth_ok") else ("✗" if ytdlp_result.get("auth_ok") is False else "—")
+    print(
+        f"[yt-dlp]  {ytdlp_result['status']}  v{ytdlp_result.get('version','?')}  "
+        f"public={'✓' if ytdlp_result.get('public_ok') else '✗'}  "
+        f"auth={auth_sym}"
+        + (f"  → {ytdlp_result.get('message') or ytdlp_result.get('auth_msg','')}" if ytdlp_result.get("message") or ytdlp_result.get("auth_msg") else "")
+    )
 
     subject, html = build_email(cookie_result, ytdlp_result)
     if subject:

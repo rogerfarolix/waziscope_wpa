@@ -1276,7 +1276,11 @@ async def extract_video_info(url: str, quality: str = "best") -> VideoInfo:
             if platform in ("twitter", "x"):
                 raise ValueError("Twitter/X requiert une authentification API. Essayez avec une URL de tweet public avec vidéo.")
             if platform == "youtube":
-                raise ValueError("YouTube a bloqué la requête (IP serveur détectée). Réessayez dans quelques secondes.")
+                raise ValueError(
+                    "YouTube a bloqué l'accès à cette vidéo depuis le serveur. "
+                    "Elle nécessite une authentification — les cookies YouTube doivent être renouvelés. "
+                    "Contactez l'administrateur."
+                )
             raise ValueError("Cette vidéo nécessite une connexion.")
         if "login" in msg.lower() or "authentication" in msg.lower() or "Account authentication" in msg:
             raise ValueError("Cette vidéo nécessite une connexion.")
