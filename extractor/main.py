@@ -302,12 +302,15 @@ _PLATFORM_OVERRIDES: dict[str, dict] = {
         "__yt_quality": True,          # utilise _YT_FORMATS[quality]
         "merge_output_format": "mp4",
         "__extra_headers": {"Referer": "https://www.youtube.com/"},
+        # yt-dlp >= 2026.08 : tv_embedded/web_embedded dépréciés.
+        # ios + android_vr ne nécessitent pas de PO token.
+        # web en fallback avec js_runtimes node pour le PO token.
         "extractor_args": {
             "youtube": {
-                "player_client": ["tv_embedded", "web_embedded", "android", "web"],
-                "player_skip": ["webpage", "configs"],
+                "player_client": ["ios", "android_vr", "web"],
             }
         },
+        "js_runtimes": ["node:/usr/bin/node"],
     },
     "pinterest": {
         "format": "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio/best",
@@ -1243,16 +1246,24 @@ async def extract_video_info(url: str, quality: str = "best") -> VideoInfo:
             raise ValueError("Cette vidéo est privée.")
         if "not available" in msg:
             raise ValueError("Cette vidéo n'est pas disponible dans votre région.")
-        if "Sign in" in msg or "login" in msg.lower() or "authentication" in msg.lower() or "Account authentication" in msg:
+        if "Sign in" in msg or "confirm you're not a bot" in msg or "bot" in msg.lower() and "sign" in msg.lower():
             if platform == "instagram":
                 raise ValueError("Instagram requiert une connexion — seuls les profils publics sans restriction sont supportés.")
             if platform in ("twitter", "x"):
                 raise ValueError("Twitter/X requiert une authentification API. Essayez avec une URL de tweet public avec vidéo.")
+            if platform == "youtube":
+                raise ValueError("YouTube a bloqué la requête (IP serveur détectée). Réessayez dans quelques secondes.")
+            raise ValueError("Cette vidéo nécessite une connexion.")
+        if "login" in msg.lower() or "authentication" in msg.lower() or "Account authentication" in msg:
             raise ValueError("Cette vidéo nécessite une connexion.")
         if "removed" in msg.lower() or "deleted" in msg.lower():
             raise ValueError("Cette vidéo a été supprimée.")
         if "members only" in msg.lower():
             raise ValueError("Contenu réservé aux membres.")
+        if "age" in msg.lower() and ("restrict" in msg.lower() or "gate" in msg.lower()):
+            raise ValueError("Cette vidéo est restreinte aux adultes (connexion requise).")
+        if "unavailable" in msg.lower() and platform == "youtube":
+            raise ValueError("Cette vidéo YouTube n'est pas disponible (privée, supprimée ou restreinte géographiquement).")
         raise ValueError(f"Impossible d'extraire : {msg}")
     except Exception as e:
         raise ValueError(f"Erreur inattendue : {str(e)}")
@@ -1303,10 +1314,10 @@ async def extract_playlist_info(url: str, limit: int = 20) -> PlaylistResponse:
         "extract_flat": True,
         "socket_timeout": 30,
         "playlistend": limit,
+        "js_runtimes": ["node:/usr/bin/node"],
         "extractor_args": {
             "youtube": {
-                "player_client": ["tv_embedded", "web_embedded", "android", "web"],
-                "player_skip": ["webpage", "configs"],
+                "player_client": ["ios", "android_vr", "web"],
             }
         },
     }
