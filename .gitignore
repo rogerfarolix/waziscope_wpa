@@ -32,6 +32,8 @@ __pycache__/
 /extractor/venv/
 /extractor/.venv/
 /extractor/venv/.req_hash
+/extractor/youtube_cookies.txt
+/extractor/cookies.txt
 env/
 venv/
 .venv/
