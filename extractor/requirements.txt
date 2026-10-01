@@ -9,3 +9,4 @@ pydantic>=2.10.0
 httpx>=0.28.0
 python-multipart>=0.0.20
 aiofiles>=24.1.0          # Lecture de fichiers asynchrone
+bgutil-ytdlp-pot-provider>=2.0.0  # PO tokens YouTube (anti-bot) via serveur Node.js bgutil

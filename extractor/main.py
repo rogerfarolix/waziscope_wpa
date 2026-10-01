@@ -42,6 +42,8 @@ _progress_store: dict[str, dict] = {}
 # Cookies YouTube — chemin relatif au répertoire du script.
 # Présence optionnelle : si absent, yt-dlp fonctionne sans (vidéos publiques).
 import os as _os
+import subprocess as _subprocess
+
 _COOKIES_PATH: str | None = None
 for _candidate in [
     _os.path.join(_os.path.dirname(__file__), "youtube_cookies.txt"),
@@ -55,6 +57,23 @@ if _COOKIES_PATH:
     logger.info(f"Cookies YouTube chargés : {_COOKIES_PATH}")
 else:
     logger.warning("Pas de fichier cookies YouTube — les vidéos restreintes échoueront.")
+
+# Démarrer le serveur bgutil (PO token provider) s'il est installé.
+# bgutil génère des Proof-of-Origin tokens pour YouTube sans cookies.
+_BGUTIL_JS = _os.path.expanduser("~/bgutil-ytdlp-pot-provider/server/build/main.js")
+if _os.path.isfile(_BGUTIL_JS):
+    try:
+        _subprocess.Popen(
+            ["/usr/bin/node", _BGUTIL_JS, "--host", "127.0.0.1"],
+            stdout=_subprocess.DEVNULL,
+            stderr=_subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        logger.info("bgutil PO token server démarré sur 127.0.0.1:4416")
+    except Exception as _e:
+        logger.warning(f"Impossible de démarrer bgutil : {_e}")
+else:
+    logger.warning(f"bgutil non trouvé ({_BGUTIL_JS}) — PO tokens non disponibles.")
 
 # ─── App ──────────────────────────────────────────────────────────────────────
 
@@ -319,16 +338,17 @@ _PLATFORM_OVERRIDES: dict[str, dict] = {
         "__yt_quality": True,          # utilise _YT_FORMATS[quality]
         "merge_output_format": "mp4",
         "__extra_headers": {"Referer": "https://www.youtube.com/"},
-        # yt-dlp >= 2026.08 : tv_embedded/web_embedded dépréciés.
-        # ios + android_vr + web avec solver EJS + cookies = zéro bot-detect.
+        # yt-dlp >= 2026.08 : ios/android_vr retournent LOGIN_REQUIRED depuis IP datacenter.
+        # web + bgutil (PO tokens) + Node.js (N-challenge) = meilleur combo serveur.
+        # bgutil est démarré automatiquement au startup (voir code startup ci-dessus).
         "extractor_args": {
             "youtube": {
-                "player_client": ["ios", "android_vr", "web"],
+                "player_client": ["web"],
             }
         },
         # Python API : dict {runtime: {path?}} — différent de la CLI --js-runtimes
         "js_runtimes": {"node": {"path": "/usr/bin/node"}},
-        "__youtube_cookies": True,      # sentinelle : get_ydl_opts injecte cookies + EJS
+        "__youtube_cookies": True,      # sentinelle : get_ydl_opts injecte cookies si dispo
     },
     "pinterest": {
         "format": "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio/best",
@@ -418,11 +438,9 @@ def get_ydl_opts(platform: str, quality: str = "best") -> dict:
     if overrides.pop("__yt_quality", False):
         base["format"] = _YT_FORMATS.get(quality, _YT_FORMATS["best"])
 
-    # Injecter cookies + EJS solver pour YouTube si disponibles
-    # NOTE: la clé Python est "remote_components" (pas "extractor_components")
+    # Injecter cookies YouTube si disponibles (bgutil gère les PO tokens)
     if overrides.pop("__youtube_cookies", False) and _COOKIES_PATH:
-        base["cookiefile"]        = _COOKIES_PATH
-        base["remote_components"] = {"ejs:github"}
+        base["cookiefile"] = _COOKIES_PATH
 
     # Fusionner User-Agent et headers supplémentaires
     ua = overrides.pop("__ua", None)
@@ -1484,13 +1502,12 @@ async def extract_playlist_info(url: str, limit: int = 20) -> PlaylistResponse:
         "js_runtimes": {"node": {"path": "/usr/bin/node"}},
         "extractor_args": {
             "youtube": {
-                "player_client": ["ios", "android_vr", "web"],
+                "player_client": ["web"],
             }
         },
     }
     if _COOKIES_PATH:
-        flat_opts["cookiefile"]        = _COOKIES_PATH
-        flat_opts["remote_components"] = {"ejs:github"}
+        flat_opts["cookiefile"] = _COOKIES_PATH
 
     def _get_flat():
         with yt_dlp.YoutubeDL(flat_opts) as ydl:
