@@ -15,7 +15,7 @@
         </h1>
 
         <p class="hero__desc">
-          TikTok sans watermark · YouTube 4K · Playlists · Longs métrages · Audio MP3
+          TikTok sans watermark · Instagram · Pinterest · Playlists · Longs métrages · Audio MP3
         </p>
 
         <!-- ── Barre principale ── -->
@@ -35,7 +35,7 @@
               v-model="inputUrl"
               ref="inputEl"
               type="url"
-              :placeholder="mode === 'playlist' ? 'URL playlist YouTube, Vimeo…' : 'Colle le lien ici…'"
+              :placeholder="mode === 'playlist' ? 'URL playlist Dailymotion, Twitch…' : 'Colle le lien ici…'"
               autocomplete="off" autocorrect="off" spellcheck="false"
               @focus="focused = true" @blur="focused = false"
               @keydown.enter="doAction"
@@ -353,7 +353,7 @@ const platformIcon = id => ({
 
 const features = [
   { icon:Film,        title:'Longs métrages',        desc:'Films, docs, conférences — aucune limite de durée.' },
-  { icon:List,        title:'Playlists entières',     desc:'Jusqu\'à 50 vidéos YouTube/Vimeo d\'un coup.' },
+  { icon:List,        title:'Playlists entières',     desc:'Jusqu\'à 50 vidéos d\'un coup (Dailymotion, Twitch, Odysee…).' },
   { icon:ShieldCheck, title:'TikTok sans watermark',  desc:'API mobile officielle, propre, sans logo.' },
   { icon:ShieldOff,   title:'Suppression métadonnées',desc:'GPS, dates, auteur effacés via FFmpeg.' },
   { icon:Music,       title:'Extraction audio MP3',   desc:'Piste audio seule depuis n\'importe quelle vidéo.' },

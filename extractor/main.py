@@ -25,7 +25,7 @@ app = FastAPI(
 )
 
 # L'extractor est un service INTERNE uniquement accessible par Laravel via le
-# réseau Docker. Pas de CORS nécessaire — aucun navigateur n'appelle ce service.
+# loopback 127.0.0.1 (Supervisor). Pas de CORS nécessaire — aucun navigateur n'appelle ce service.
 
 
 async def extract_video_info(url: str, quality: str = "best") -> VideoInfo:

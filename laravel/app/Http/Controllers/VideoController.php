@@ -166,19 +166,19 @@ class VideoController extends Controller
     {
         $fallback = ['platforms' => [
             ['id' => 'tiktok',      'name' => 'TikTok',      'no_watermark' => true,  'notes' => 'Sans watermark via API mobile'],
-            ['id' => 'youtube',     'name' => 'YouTube',     'no_watermark' => false, 'notes' => 'HD jusqu\'à 4K, playlists supportées'],
+            ['id' => 'youtube',     'name' => 'YouTube',     'no_watermark' => false, 'notes' => 'Indisponible depuis le serveur (IP bloquée), proxy requis'],
             ['id' => 'pinterest',   'name' => 'Pinterest',   'no_watermark' => false, 'notes' => 'MP4 direct (scraper intégré)'],
-            ['id' => 'facebook',    'name' => 'Facebook',    'no_watermark' => false, 'notes' => 'Vidéos & Reels publics'],
+            ['id' => 'facebook',    'name' => 'Facebook',    'no_watermark' => false, 'notes' => 'Indisponible (extracteur yt-dlp cassé en amont)'],
             ['id' => 'instagram',   'name' => 'Instagram',   'no_watermark' => false, 'notes' => 'Reels & posts publics'],
             ['id' => 'linkedin',    'name' => 'LinkedIn',    'no_watermark' => false, 'notes' => 'Vidéos natives'],
-            ['id' => 'twitter',     'name' => 'Twitter/X',   'no_watermark' => false, 'notes' => 'Vidéos tweets'],
+            ['id' => 'twitter',     'name' => 'Twitter/X',   'no_watermark' => false, 'notes' => 'Instable (compte connecté souvent requis)'],
             ['id' => 'dailymotion', 'name' => 'Dailymotion', 'no_watermark' => false, 'notes' => 'Toutes qualités'],
-            ['id' => 'vimeo',       'name' => 'Vimeo',       'no_watermark' => false, 'notes' => 'HD jusqu\'à 4K'],
+            ['id' => 'vimeo',       'name' => 'Vimeo',       'no_watermark' => false, 'notes' => 'Indisponible depuis le serveur (IP bloquée), proxy requis'],
             ['id' => 'twitch',      'name' => 'Twitch',      'no_watermark' => false, 'notes' => 'Clips & VODs'],
-            ['id' => 'rumble',      'name' => 'Rumble',      'no_watermark' => false, 'notes' => 'Toutes qualités'],
+            ['id' => 'rumble',      'name' => 'Rumble',      'no_watermark' => false, 'notes' => 'Indisponible depuis le serveur (IP bloquée), proxy requis'],
             ['id' => 'odysee',      'name' => 'Odysee',      'no_watermark' => false, 'notes' => 'Vidéos LBRY/Odysee'],
-            ['id' => 'snapchat',    'name' => 'Snapchat',    'no_watermark' => false, 'notes' => 'Spotlight publics'],
-            ['id' => 'bilibili',    'name' => 'Bilibili',    'no_watermark' => false, 'notes' => 'Vidéos chinoises'],
+            ['id' => 'snapchat',    'name' => 'Snapchat',    'no_watermark' => false, 'notes' => 'Indisponible (extracteur yt-dlp cassé en amont)'],
+            ['id' => 'bilibili',    'name' => 'Bilibili',    'no_watermark' => false, 'notes' => 'Liens BV… bloqués depuis le serveur'],
         ]];
 
         try {
