@@ -362,27 +362,29 @@ const features = [
 
 // ─── Mount ───────────────────────────────────────────────────────────────────
 onMounted(async () => {
+  // Appels API lancés d'abord, sans attendre : rien ne doit pouvoir les bloquer
+  axios.get('/api/v1/capabilities')
+    .then(cap => { if (cap?.data?.ffmpeg !== undefined) ffmpeg.value = cap.data.ffmpeg })
+    .catch(() => {})
+  axios.get('/api/v1/status')
+    .then(st => { if (st?.data?.platforms) platformStatus.value = st.data.platforms })
+    .catch(() => {})
+
   const shared = route.query.url || route.query.shared
   if (shared) { inputUrl.value = decodeURIComponent(String(shared)); doAction(); return }
   window.addEventListener('wzs:share', e => { inputUrl.value = e.detail.url; doAction() })
 
-  // Détection auto clipboard — auto-remplit si URL copiée
+  // Détection auto clipboard — readText() peut rester en attente indéfiniment
+  // (demande de permission ignorée) : on abandonne après 1,5 s.
   try {
-    const text = await navigator.clipboard.readText()
+    const text = await Promise.race([
+      navigator.clipboard.readText(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 1500)),
+    ])
     if (text?.trim().match(/^https?:\/\/.{6,}/) && !inputUrl.value) {
       inputUrl.value = text.trim()
       notify({ message: 'URL depuis presse-papier collée', type: 'info' })
     }
-  } catch {}
-
-  try {
-    const cap = await axios.get('/api/v1/capabilities').catch(() => null)
-    if (cap?.data?.ffmpeg !== undefined) ffmpeg.value = cap.data.ffmpeg
-  } catch {}
-
-  try {
-    const st = await axios.get('/api/v1/status').catch(() => null)
-    if (st?.data?.platforms) platformStatus.value = st.data.platforms
   } catch {}
 })
 
