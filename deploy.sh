@@ -95,6 +95,27 @@ elif sudo service php-fpm status &>/dev/null; then
   sudo service php-fpm reload 2>/dev/null && log "PHP-FPM: reloaded" || true
 fi
 
+# ── 8. Vérifications post-déploiement ─────────────────────────────────────────
+log "Tests unitaires extractor..."
+( cd "$EXTRACTOR" && venv/bin/python -m pytest tests -q 2>&1 | tail -1 | tee -a "$LOG" ) \
+  || log "AVERTISSEMENT: tests unitaires en échec"
+
+log "Health check extractor..."
+for i in $(seq 1 15); do
+  curl -sf -m 5 http://127.0.0.1:8032/health >/dev/null && break
+  sleep 2
+done
+if curl -sf -m 5 http://127.0.0.1:8032/health >/dev/null; then
+  log "Extractor: UP"
+else
+  log "ERREUR: extractor ne répond pas après redémarrage !"
+  exit 1
+fi
+
+# Smoke test rapide (plateformes fiables) — n'interrompt pas le déploiement
+log "Smoke test..."
+"$EXTRACTOR/venv/bin/python" "$EXTRACTOR/smoke_test.py" --only tiktok,pinterest,dailymotion 2>&1 | tail -4 | tee -a "$LOG" || true
+
 log "=== WaziScope Deploy OK ==="
 echo ""
 echo "  Branch : $(git -C "$ROOT" rev-parse --abbrev-ref HEAD)"

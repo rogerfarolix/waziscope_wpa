@@ -75,6 +75,28 @@ if _os.path.isfile(_BGUTIL_JS):
 else:
     logger.warning(f"bgutil non trouvé ({_BGUTIL_JS}) — PO tokens non disponibles.")
 
+# Impersonation navigateur (nécessite curl_cffi)
+try:
+    import curl_cffi  # noqa: F401
+    from yt_dlp.networking.impersonate import ImpersonateTarget
+    _IMPERSONATE_TARGET = ImpersonateTarget("chrome")
+except Exception:
+    _IMPERSONATE_TARGET = None
+    logger.warning("curl_cffi absent — impersonation navigateur désactivée.")
+
+# YouTube : l'impersonation casse le client web + PO tokens bgutil.
+_NO_IMPERSONATE = {"youtube"}
+
+# Proxy (ex: http://user:pass@host:port) pour plateformes bannissant les IP datacenter
+_PROXY_URL = _os.environ.get("WAZISCOPE_PROXY_URL", "").strip() or None
+_PROXY_PLATFORMS = set(
+    p.strip() for p in _os.environ.get(
+        "WAZISCOPE_PROXY_PLATFORMS", "youtube,rumble,bilibili,vimeo"
+    ).split(",") if p.strip()
+)
+if _PROXY_URL:
+    logger.info(f"Proxy actif pour : {sorted(_PROXY_PLATFORMS)}")
+
 # ─── App ──────────────────────────────────────────────────────────────────────
 
 app = FastAPI(
@@ -453,7 +475,36 @@ def get_ydl_opts(platform: str, quality: str = "best") -> dict:
 
     base.update(overrides)
     base["http_headers"] = merged_headers
+
+    # Impersonation TLS navigateur (curl_cffi) — contourne une partie des
+    # blocages anti-bot (Instagram notamment). Ignoré si curl_cffi absent.
+    if _IMPERSONATE_TARGET is not None and platform not in _NO_IMPERSONATE:
+        base["impersonate"] = _IMPERSONATE_TARGET
+
+    # Proxy résidentiel optionnel pour les plateformes qui bannissent les IP
+    # datacenter (YouTube, Rumble, Bilibili…). Configurer WAZISCOPE_PROXY_URL.
+    if _PROXY_URL and platform in _PROXY_PLATFORMS:
+        base["proxy"] = _PROXY_URL
     return base
+
+
+def _friendly_error(msg: str, platform: str) -> str:
+    """Traduit une erreur brute yt-dlp en message lisible (sans jargon technique)."""
+    low = msg.lower()
+    name = platform.capitalize() if platform != "twitter" else "Twitter/X"
+    if "403" in low or "412" in low or "blocked" in low or "forbidden" in low:
+        return f"{name} bloque temporairement notre serveur. Réessayez plus tard."
+    if "404" in low or "does not exist" in low or "not found" in low:
+        return "Vidéo introuvable : vérifiez le lien (elle a peut-être été supprimée)."
+    if "no video could be found" in low or "no video formats" in low:
+        return "Aucune vidéo trouvée à cette adresse."
+    if "unsupported url" in low:
+        return "Ce type de lien n'est pas pris en charge. Utilisez le lien direct de la vidéo."
+    if "logged-in" in low or "login" in low or "cookies" in low:
+        return f"{name} exige une connexion pour cette vidéo."
+    if "timed out" in low or "timeout" in low:
+        return f"{name} met trop de temps à répondre. Réessayez."
+    return f"Impossible d'extraire cette vidéo {name}. Le lien est peut-être privé ou non pris en charge."
 
 
 # ─── Helpers HTTP communs ─────────────────────────────────────────────────────
@@ -1449,9 +1500,10 @@ async def extract_video_info(url: str, quality: str = "best") -> VideoInfo:
             raise ValueError("Cette vidéo est restreinte aux adultes (connexion requise).")
         if "unavailable" in msg.lower() and platform == "youtube":
             raise ValueError("Cette vidéo YouTube n'est pas disponible (privée, supprimée ou restreinte géographiquement).")
-        raise ValueError(f"Impossible d'extraire : {msg}")
+        raise ValueError(_friendly_error(msg, platform))
     except Exception as e:
-        raise ValueError(f"Erreur inattendue : {str(e)}")
+        logger.exception(f"[{platform}] Erreur inattendue")
+        raise ValueError(_friendly_error(str(e), platform))
 
     if not info:
         raise ValueError("Aucune information trouvée.")

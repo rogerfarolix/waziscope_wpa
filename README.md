@@ -41,22 +41,24 @@ WaziScope est une **Progressive Web App** qui permet de télécharger des vidéo
 
 ## Plateformes supportées
 
+> Statuts vérifiés en prod le 07/11/2026. Vérification automatique : `extractor/smoke_test.py` (cron horaire, mail si changement).
+
 | Plateforme  | Statut | Notes                                             |
 |-------------|--------|---------------------------------------------------|
 | TikTok      | ✅     | Sans watermark · fallback tikwm.com si IP bloquée |
-| YouTube     | ✅     | HD jusqu'à 1080p · Playlists                      |
+| YouTube     | ⚠️     | IP datacenter bloquée — nécessite `WAZISCOPE_PROXY_URL` (proxy résidentiel) |
 | Pinterest   | ✅     | Scraper HTML · HLS→MP4 automatique                |
-| Facebook    | ✅     | Vidéos publiques + Reels                          |
-| Instagram   | ⚠️     | Profils publics uniquement (sans login)            |
+| Facebook    | ❌     | Extracteur yt-dlp cassé (nov. 2026) — en attente correctif amont |
+| Instagram   | ✅     | Via impersonation navigateur (curl_cffi)           |
 | LinkedIn    | ✅     | Vidéos natives                                    |
-| Twitter / X | ⚠️     | Tweets publics avec vidéo                         |
+| Twitter / X | ⚠️     | Instable sans compte connecté                      |
 | Dailymotion | ✅     | Via metadata API (sans impersonation)             |
-| Vimeo       | ✅     | HD · Playlists                                    |
+| Vimeo       | ⚠️     | Exige souvent une connexion depuis le serveur     |
 | Twitch      | ✅     | Clips · VODs publics                              |
-| Rumble      | ✅     | Longue durée                                      |
+| Rumble      | ⚠️     | IP datacenter bloquée (403) — proxy requis         |
 | Odysee      | ✅     | Open source                                       |
-| Snapchat    | ✅     | Spotlight public                                  |
-| Bilibili    | ✅     | Anime · Musique                                   |
+| Snapchat    | ❌     | Extracteur yt-dlp cassé (nov. 2026)               |
+| Bilibili    | ⚠️     | Liens `BV…` bloqués (412) — proxy requis           |
 
 ---
 
@@ -280,3 +282,16 @@ WaziScope est destiné au téléchargement de contenu dont vous êtes l'auteur o
 ---
 
 *Développé par [Roger Gnanih](https://roger.nealix.org) · Nealix · Bénin*
+
+---
+
+## Déploiement (prod)
+
+La prod tourne **sans Docker** : PHP-FPM 8.3 + Nginx système + extractor sous Supervisor (`127.0.0.1:8032`). Lancer `./deploy.sh` sur le serveur.
+
+Variables optionnelles de l'extractor (dans `/etc/supervisor/conf.d/waziscope-extractor.conf`, clé `environment=`) :
+
+- `WAZISCOPE_PROXY_URL` : proxy résidentiel `http://user:pass@host:port`
+- `WAZISCOPE_PROXY_PLATFORMS` : plateformes qui passent par le proxy (défaut `youtube,rumble,bilibili,vimeo`)
+
+Tests : `cd extractor && venv/bin/python -m pytest tests` · `cd laravel && php artisan test`

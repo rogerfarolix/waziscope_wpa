@@ -97,3 +97,6 @@ desktop.ini
 *.pfx
 secrets/
 .secrets
+# Smoke test
+/extractor/.smoke_state.json
+/extractor/smoke_test.log
