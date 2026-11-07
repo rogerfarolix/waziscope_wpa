@@ -45,6 +45,10 @@
             <button class="si-paste" @click="paste" title="Coller"><Clipboard :size="13"/></button>
           </div>
 
+          <p v-if="inputPlatformDown" class="plat-warn" role="status">
+            ⚠️ {{ inputPlatformDown }} est actuellement perturbé : l'extraction risque d'échouer.
+          </p>
+
           <!-- Options -->
           <div class="search-opts">
             <div class="opt-group">
@@ -235,13 +239,15 @@
 
       <div class="plats-track-wrap">
         <div class="plats-track">
-          <div v-for="p in platformCards" :key="p.id" class="plat-card">
+          <div v-for="p in platformCards" :key="p.id"
+            :class="['plat-card', { 'plat-card--down': platformStatus[p.id] === false }]">
             <div :class="['plat-card__icon', `pc-${p.id}`]">
               <component :is="platformIcon(p.id)" :size="20"/>
             </div>
             <p class="plat-card__name">{{ p.name }}</p>
             <p class="plat-card__feat">{{ p.feat }}</p>
-            <span v-if="p.badge" class="plat-card__badge">{{ p.badge }}</span>
+            <span v-if="platformStatus[p.id] === false" class="plat-card__badge plat-card__badge--down">Indisponible</span>
+            <span v-else-if="p.badge" class="plat-card__badge">{{ p.badge }}</span>
           </div>
         </div>
       </div>
@@ -267,7 +273,7 @@
 </template>
 
 <script setup>
-import { ref, inject, onMounted } from 'vue'
+import { ref, inject, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import axios from 'axios'
 import {
@@ -319,6 +325,25 @@ const platformCards = [
   { id:'bilibili',    name:'Bilibili',     feat:'Anime · Musique',     badge:null },
 ]
 
+// ─── État des plateformes (issu du smoke test serveur) ───────────────────────
+const platformStatus = ref({})
+
+const PLATFORM_HOSTS = {
+  tiktok: /tiktok\.com/, youtube: /youtube\.com|youtu\.be/, instagram: /instagram\.com|instagr\.am/,
+  facebook: /facebook\.com|fb\.watch|fb\.com/, twitter: /twitter\.com|x\.com/, pinterest: /pinterest\.|pin\.it/,
+  linkedin: /linkedin\.com|lnkd\.in/, vimeo: /vimeo\.com/, dailymotion: /dailymotion\.com|dai\.ly/,
+  twitch: /twitch\.tv/, rumble: /rumble\.com/, odysee: /odysee\.com|lbry\.tv/,
+  snapchat: /snapchat\.com/, bilibili: /bilibili\.com|b23\.tv/,
+}
+
+const inputPlatformDown = computed(() => {
+  const url = inputUrl.value.trim().toLowerCase()
+  if (!url) return null
+  const id = Object.keys(PLATFORM_HOSTS).find(k => PLATFORM_HOSTS[k].test(url))
+  if (!id || platformStatus.value[id] !== false) return null
+  return platformCards.find(p => p.id === id)?.name ?? id
+})
+
 const platformIcon = id => ({
   tiktok:Music2, youtube:PlayCircle, pinterest:Bookmark, facebook:Users,
   instagram:Camera, linkedin:Briefcase, twitter:Bird, dailymotion:Video,
@@ -353,6 +378,11 @@ onMounted(async () => {
   try {
     const cap = await axios.get('/api/v1/capabilities').catch(() => null)
     if (cap?.data?.ffmpeg !== undefined) ffmpeg.value = cap.data.ffmpeg
+  } catch {}
+
+  try {
+    const st = await axios.get('/api/v1/status').catch(() => null)
+    if (st?.data?.platforms) platformStatus.value = st.data.platforms
   } catch {}
 })
 
@@ -796,6 +826,12 @@ const fmt    = s => {
   display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
   transition: all .2s; position: relative;
   cursor: default;
+}
+.plat-card--down { opacity: .55; }
+.plat-card__badge--down { background: rgba(239,68,68,.15) !important; color: #f87171 !important; }
+.plat-warn {
+  margin: 10px 0 0; padding: 8px 12px; border-radius: 10px; font-size: 13px;
+  background: rgba(245,158,11,.1); color: #fbbf24; border: 1px solid rgba(245,158,11,.25);
 }
 .plat-card:hover {
   border-color: var(--border-md);

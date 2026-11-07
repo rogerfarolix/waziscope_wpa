@@ -6,6 +6,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest  # noqa: E402
 import main  # noqa: E402
+import wz.core as core  # noqa: E402
 
 
 @pytest.mark.parametrize("url,expected", [
@@ -39,7 +40,7 @@ def test_youtube_never_impersonated():
 
 
 def test_proxy_only_on_listed_platforms(monkeypatch):
-    monkeypatch.setattr(main, "_PROXY_URL", "http://proxy:1")
-    monkeypatch.setattr(main, "_PROXY_PLATFORMS", {"rumble"})
+    monkeypatch.setattr(core, "_PROXY_URL", "http://proxy:1")
+    monkeypatch.setattr(core, "_PROXY_PLATFORMS", {"rumble"})
     assert main.get_ydl_opts("rumble")["proxy"] == "http://proxy:1"
     assert "proxy" not in main.get_ydl_opts("tiktok")

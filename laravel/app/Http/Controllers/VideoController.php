@@ -148,6 +148,20 @@ class VideoController extends Controller
 
     // ─── Plateformes ───────────────────────────────────────────────────────────
 
+    public function status(): JsonResponse
+    {
+        $data = \Illuminate\Support\Facades\Cache::remember('waziscope.platform_status', 300, function () {
+            try {
+                $res = Http::timeout(self::FAST_TIMEOUT)->get("{$this->extractorUrl}/status");
+                return $res->successful() ? $res->json() : null;
+            } catch (\Exception) {
+                return null;
+            }
+        });
+
+        return response()->json($data ?? ['platforms' => (object) [], 'checked_at' => null]);
+    }
+
     public function platforms(): JsonResponse
     {
         $fallback = ['platforms' => [

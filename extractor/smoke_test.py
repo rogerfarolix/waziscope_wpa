@@ -70,13 +70,17 @@ def main() -> int:
     failed = sorted(p for p, ok in results.items() if not ok)
     print(f"\n{len(results) - len(failed)}/{len(results)} plateformes OK")
 
+    try:
+        with open(STATE_FILE) as f:
+            previous = json.load(f)
+    except Exception:
+        previous = {}
+
+    # Un test partiel (--only) complète l'état existant sans l'écraser
+    merged = {**previous, **results}
+
     if args.mail:
-        try:
-            with open(STATE_FILE) as f:
-                previous = json.load(f)
-        except Exception:
-            previous = {}
-        if previous != results:
+        if previous != merged:
             sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
             from check_cookies import send_email  # réutilise la config SMTP existante
             rows = "".join(
@@ -84,8 +88,10 @@ def main() -> int:
             )
             subject = f"[WaziScope] {len(failed)} plateforme(s) en échec" if failed else "[WaziScope] Toutes les plateformes OK"
             send_email(subject, f"<h3>{subject}</h3><table border=1 cellpadding=4>{rows}</table>")
-        with open(STATE_FILE, "w") as f:
-            json.dump(results, f)
+
+    # Toujours enregistrer : lu par GET /status → affiché dans l'interface
+    with open(STATE_FILE, "w") as f:
+        json.dump(merged, f)
 
     return 1 if failed else 0
 

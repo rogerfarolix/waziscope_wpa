@@ -21,6 +21,7 @@ Route::prefix('v1')->group(function () {
     Route::middleware('throttle:120,1')->group(function () {
         Route::get('/health',       [VideoController::class, 'health']);
         Route::get('/platforms',    [VideoController::class, 'platforms']);
+        Route::get('/status',       [VideoController::class, 'status']);
         Route::get('/capabilities', [VideoController::class, 'checkCapabilities']);
         Route::get('/detect',       [VideoController::class, 'detect']);
     });
